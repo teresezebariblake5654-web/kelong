@@ -6,6 +6,60 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 火星 AI Midnight — window chrome when cinematic home is active */
+html[data-cinematic-home='1'] {
+  --swift-bg: #070b1f;
+  --swift-bg-secondary: #0b1230;
+  --swift-surface: rgba(18, 25, 55, 0.58);
+  --swift-border: rgba(255, 255, 255, 0.12);
+  --swift-text: #ffffff;
+  --swift-text-secondary: rgba(255, 255, 255, 0.68);
+  --swift-gold: #ffd84d;
+  --swift-gold-light: #ffe98a;
+  --swift-gold-glow: rgba(255, 216, 77, 0.28);
+}
+
+html[data-cinematic-home='1'] [data-skin-presentation],
+html[data-cinematic-home='1'] .swift-midnight-shell {
+  background: linear-gradient(180deg, #080c20 0%, #070b1f 100%) !important;
+}
+
+html[data-cinematic-home='1'] [data-skin-app-titlebar='true'] {
+  background: linear-gradient(180deg, #080c20 0%, #070b1f 100%) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+html[data-cinematic-home='1'] [data-skin-app-titlebar='true'] .swift-titlebar-brand {
+  color: rgba(255, 255, 255, 0.88);
+}
+
+html[data-cinematic-home='1'] [data-skin-app-titlebar='true'] img {
+  filter: drop-shadow(0 0 10px rgba(255, 216, 77, 0.22));
+}
+
+html[data-cinematic-home='1'] [data-skin-app-titlebar='true'] button {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+html[data-cinematic-home='1'] [data-skin-app-titlebar='true'] button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+html[data-cinematic-home='1'] [data-skin-app-titlebar='true'] .text-foreground\/90 {
+  color: rgba(255, 255, 255, 0.82) !important;
+}
+
+html[data-cinematic-home='1'] [data-skin-app-titlebar='true'] button:hover:not(:last-child) {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-cinematic-home='1'] [data-skin-app-titlebar='true'] button:last-child:hover {
+  background: #c42b1c !important;
+  color: #fff !important;
+}
+
 /* KaTeX styles */
 .katex-display {
   overflow-x: auto;

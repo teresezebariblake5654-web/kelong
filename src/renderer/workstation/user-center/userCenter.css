@@ -1,0 +1,494 @@
+/* User center — cinematic glass drawer (scoped under workstation-root) */
+
+.workstation-root .uc-trigger {
+  position: relative;
+  display: inline-flex;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(10, 12, 18, 0.45);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+  color: #fff;
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 220ms ease,
+    box-shadow 220ms ease;
+  box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.12);
+}
+
+.workstation-root .uc-trigger:hover {
+  transform: scale(1.04);
+}
+
+.workstation-root .uc-trigger:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.35);
+  outline-offset: 2px;
+}
+
+/* Apple-style black frosted glass — matches cinematic home UI */
+.workstation-root .uc-trigger--frost {
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(8, 10, 16, 0.42);
+  backdrop-filter: blur(28px) saturate(1.2);
+  -webkit-backdrop-filter: blur(28px) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 8px 24px -14px rgba(0, 0, 0, 0.55);
+  animation: none;
+  overflow: hidden;
+}
+
+.workstation-root .uc-trigger--frost::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    160deg,
+    rgba(255, 255, 255, 0.45) 0%,
+    rgba(255, 255, 255, 0.1) 28%,
+    rgba(255, 255, 255, 0) 48%,
+    rgba(255, 255, 255, 0.08) 72%,
+    rgba(255, 255, 255, 0.28) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.workstation-root .uc-trigger--frost:hover {
+  background: rgba(12, 14, 22, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 10px 28px -12px rgba(0, 0, 0, 0.6);
+}
+
+.workstation-root .uc-trigger__icon {
+  position: relative;
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.workstation-root .uc-trigger__orb {
+  width: 26px;
+  height: 26px;
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.75), transparent 42%),
+    radial-gradient(circle at 50% 50%, #2a2f3d 0%, #0c0e14 100%);
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.35);
+}
+
+.workstation-root .uc-trigger__avatar {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+  display: block;
+}
+
+.workstation-root .uc-trigger--avatar {
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.08),
+    0 8px 20px -12px rgba(15, 23, 42, 0.35);
+}
+
+.workstation-root .uc-trigger--avatar.uc-trigger--frost {
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 10px 28px -12px rgba(0, 0, 0, 0.55);
+}
+
+.workstation-root .uc-trigger__initials {
+  position: relative;
+  z-index: 1;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workstation-root .uc-trigger {
+    animation: none;
+  }
+}
+
+.workstation-root .uc-shell {
+  position: absolute;
+  inset: 0;
+  top: 56px;
+  z-index: 70;
+  /* Shell must never capture clicks itself — only drawer / backdrop. */
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.workstation-root--glass-workbench .uc-shell {
+  top: 0;
+}
+
+.workstation-root .uc-shell--open .uc-drawer,
+.workstation-root .uc-shell--open .uc-backdrop {
+  pointer-events: auto;
+}
+
+.workstation-root .uc-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 6, 12, 0.42);
+  opacity: 0;
+  transition: opacity 280ms ease;
+}
+
+.workstation-root .uc-shell--open .uc-backdrop {
+  opacity: 1;
+}
+
+/* Desktop: layout push instead of dimming — keep an invisible dismiss hit-target. */
+@media (min-width: 1280px) {
+  .workstation-root .uc-backdrop {
+    background: transparent;
+  }
+
+  .workstation-root .uc-shell--open .uc-backdrop {
+    opacity: 0;
+  }
+}
+
+.workstation-root .uc-drawer {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 8px;
+  width: min(328px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(14, 15, 22, 0.72);
+  backdrop-filter: blur(28px) saturate(135%);
+  -webkit-backdrop-filter: blur(28px) saturate(135%);
+  box-shadow: 0 24px 60px -36px rgba(0, 0, 0, 0.65);
+  color: rgba(255, 255, 255, 0.92);
+  transform: translateX(-105%);
+  transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  overflow: hidden;
+}
+
+.workstation-root .uc-shell--open .uc-drawer {
+  transform: translateX(0);
+}
+
+.workstation-root .uc-main-shift {
+  transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+@media (min-width: 1280px) {
+  .workstation-root.uc-layout-pushed .uc-main-shift {
+    transform: translateX(344px);
+  }
+}
+
+.workstation-root .uc-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 16px 14px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.workstation-root .uc-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.workstation-root .uc-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.workstation-root .uc-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 2px 4px;
+}
+
+.workstation-root .uc-brand__orb {
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.9), transparent 40%),
+    radial-gradient(circle at 68% 70%, rgba(180, 150, 255, 0.5), transparent 48%),
+    linear-gradient(145deg, #3a4054, #10131a);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  flex-shrink: 0;
+}
+
+.workstation-root .uc-brand__title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.workstation-root .uc-brand__sub {
+  margin-top: 2px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.42);
+  text-transform: uppercase;
+}
+
+.workstation-root .uc-card {
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 12px;
+}
+
+.workstation-root .uc-nav-label {
+  margin: 14px 4px 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.workstation-root .uc-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workstation-root .uc-nav__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.72);
+  text-align: left;
+  transition: background 160ms ease, color 160ms ease, filter 160ms ease;
+}
+
+.workstation-root .uc-nav__item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  filter: brightness(1.06);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.workstation-root .uc-nav__item--active {
+  background: linear-gradient(135deg, rgba(212, 185, 120, 0.28), rgba(120, 126, 140, 0.22));
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(212, 185, 120, 0.22);
+}
+
+.workstation-root .uc-credit-ring {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  flex-shrink: 0;
+}
+
+.workstation-root .uc-credit-ring svg {
+  transform: rotate(-90deg);
+}
+
+.workstation-root .uc-credit-ring__label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.workstation-root .uc-credit-ring__sub {
+  font-size: 9px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.workstation-root .uc-btn-gold {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 9999px;
+  padding: 9px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #1a160e;
+  background: linear-gradient(135deg, #e8d5a3 0%, #c4a66a 100%);
+  transition: filter 160ms ease, transform 160ms ease;
+}
+
+.workstation-root .uc-btn-gold:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+.workstation-root .uc-btn-gold:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.workstation-root .uc-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.workstation-root .uc-panel h3 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.workstation-root .uc-panel p.lead {
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.workstation-root .uc-stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.workstation-root .uc-stat {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+  padding: 10px 12px;
+}
+
+.workstation-root .uc-stat__label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.workstation-root .uc-stat__value {
+  margin-top: 4px;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.workstation-root .uc-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workstation-root .uc-chip {
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 7px 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.workstation-root .uc-chip--on {
+  background: linear-gradient(135deg, rgba(212, 185, 120, 0.3), rgba(120, 126, 140, 0.2));
+  border-color: rgba(212, 185, 120, 0.35);
+  color: #fff;
+}
+
+.workstation-root .uc-input,
+.workstation-root .uc-select,
+.workstation-root .uc-textarea {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.28);
+  color: #fff;
+  padding: 10px 12px;
+  font-size: 13px;
+  outline: none;
+}
+
+.workstation-root .uc-textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.workstation-root .uc-input:focus,
+.workstation-root .uc-select:focus,
+.workstation-root .uc-textarea:focus {
+  border-color: rgba(212, 185, 120, 0.45);
+}
+
+.workstation-root .uc-qr-slot {
+  display: flex;
+  min-height: 132px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 12px;
+  text-align: center;
+  padding: 16px;
+}
+
+.workstation-root .uc-list-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 10px 2px;
+}
+
+.workstation-root .uc-list-row:last-child {
+  border-bottom: none;
+}
+
+.workstation-root .uc-muted {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+}
+
+.workstation-root .uc-help-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  cursor: pointer;
+  text-align: left;
+}

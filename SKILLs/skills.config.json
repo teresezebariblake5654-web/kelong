@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Default skill configuration for LobsterAI",
+  "description": "Default skill configuration for Workhorse AI",
   "defaults": {
     "docx": { "order": 10, "enabled": true },
     "web-search": { "order": 15, "enabled": true },
@@ -28,7 +28,7 @@
     "films-search": { "order": 222, "enabled": true },
     "music-search": { "order": 223, "enabled": true },
     "technology-news-search": { "order": 224, "enabled": false },
-    "youdaonote": { "order": 298, "enabled": true },
+    "youdaonote": { "order": 298, "enabled": false },
     "skill-vetter": { "order": 299, "enabled": true },
     "skill-creator": { "order": 300, "enabled": true }
   }

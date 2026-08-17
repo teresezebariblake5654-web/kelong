@@ -10,13 +10,17 @@ import {
   AppUpdateStatus,
   isManualDownloadUrl,
 } from '../shared/appUpdate/constants';
+import { isImBotEnabled, isYoudaoCloudEnabled } from '../shared/featureFlags';
 import { ProviderAuthType, ProviderName, ProviderRegistry } from '../shared/providers';
 import { CoworkView } from './components/cowork';
 import { CoworkShortcutDirection, CoworkUiEvent } from './components/cowork/constants';
 import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
 import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
 import EngineFailureOverlay from './components/cowork/EngineFailureOverlay';
+import { AppErrorBoundary } from './components/AppErrorBoundary';
 import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
+import CowPetHost from './components/pet/CowPetHost';
+import { EditableTextContextMenu } from './components/EditableTextContextMenu';
 import KitsView from './components/kits/KitsView';
 import { McpView } from './components/mcp';
 import PrivacyDialog from './components/PrivacyDialog';
@@ -69,6 +73,10 @@ import { setActiveKitIds } from './store/slices/kitSlice';
 import { setAvailableModels, setDefaultSelectedModel } from './store/slices/modelSlice';
 import { clearSelection } from './store/slices/quickActionSlice';
 import { CoworkCollaborationMode, type CoworkPermissionResult } from './types/cowork';
+import { WorkstationApp } from './workstation/WorkstationApp';
+import { isWorkstationCoworkSession } from './workstation/services/lobsterChatBridge';
+import { agentService } from './services/agent';
+import { AgentId } from '../shared/agent/constants';
 
 const AGENT_TASK_SLOT_SHORTCUT_ACTIONS = [
   ShortcutAction.OpenAgentTask1,
@@ -90,7 +98,9 @@ const SETTINGS_TAB_SHORTCUT_ACTIONS: Array<{
   { action: ShortcutAction.OpenSettingsAppearance, initialTab: 'appearance' },
   { action: ShortcutAction.OpenSettingsAgentEngine, initialTab: 'coworkAgentEngine' },
   { action: ShortcutAction.OpenSettingsModel, initialTab: 'model' },
-  { action: ShortcutAction.OpenSettingsIm, initialTab: 'im' },
+  ...(isImBotEnabled()
+    ? [{ action: ShortcutAction.OpenSettingsIm, initialTab: 'im' as const }]
+    : []),
   { action: ShortcutAction.OpenSettingsBrowser, initialTab: 'browserWebAccess' },
   { action: ShortcutAction.OpenSettingsEmail, initialTab: 'email' },
   { action: ShortcutAction.OpenSettingsMemory, initialTab: 'coworkMemory' },
@@ -123,7 +133,9 @@ const logAppUpdateRendererLifecycle = (
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions & { requestId: number }>({ requestId: 0 });
-  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp'>('cowork');
+  const [mainView, setMainView] = useState<'workstation' | 'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp'>('workstation');
+  /** Workstation cinematic department picker (`/`) — hide cow pet on this home. */
+  const [workstationCinematicHome, setWorkstationCinematicHome] = useState(true);
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -277,12 +289,22 @@ const App: React.FC = () => {
         }
         mark('model resolution done');
 
-        const agreed = await window.electron.store.get('privacy_agreed');
-        setPrivacyAgreed(agreed === true);
+        if (!isYoudaoCloudEnabled()) {
+          const agreed = await window.electron.store.get('privacy_agreed');
+          if (agreed !== true) {
+            await window.electron.store.set('privacy_agreed', true);
+          }
+          setPrivacyAgreed(true);
+        } else {
+          const agreed = await window.electron.store.get('privacy_agreed');
+          setPrivacyAgreed(agreed === true);
+        }
         mark('privacy check done');
 
         setIsInitialized(true);
         mark('shell ready');
+        // Default landing: enterprise workstation after init (welcome may still overlay).
+        setMainView('workstation');
         if (!hasReportedAppStartedRef.current) {
           hasReportedAppStartedRef.current = true;
           void reportYdAnalyzer({
@@ -393,6 +415,10 @@ const App: React.FC = () => {
 
   const handleShowCowork = useCallback(() => {
     setMainView('cowork');
+  }, []);
+
+  const handleShowWorkstation = useCallback(() => {
+    setMainView('workstation');
   }, []);
 
   const handleShowScheduledTasks = useCallback(() => {
@@ -513,6 +539,8 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (!isYoudaoCloudEnabled()) return;
+
     let mounted = true;
 
     const loadInitialUpdateState = async () => {
@@ -592,10 +620,6 @@ const App: React.FC = () => {
       unsubscribe();
     };
   }, [showToast, stopUserInitiatedUpdateFlow]);
-
-  const handleShowLogin = useCallback(() => {
-    showToast(i18nService.t('featureInDevelopment'));
-  }, [showToast]);
 
   const runUpdateCheck = useCallback(async () => {
     try {
@@ -728,7 +752,10 @@ const App: React.FC = () => {
   const handlePrivacyAccept = useCallback(async () => {
     await window.electron.store.set('privacy_agreed', true);
     setPrivacyAgreed(true);
-    setShowWelcome(true);
+    // Youdao cloud off: skip welcome (no Youdao login promo).
+    if (isYoudaoCloudEnabled()) {
+      setShowWelcome(true);
+    }
   }, []);
 
   const handlePrivacyReject = useCallback(() => {
@@ -737,11 +764,18 @@ const App: React.FC = () => {
   }, []);
 
   const handleWelcomeLogin = useCallback(async () => {
+    if (!isYoudaoCloudEnabled()) {
+      setShowWelcome(false);
+      setMainView('workstation');
+      return;
+    }
     setShowWelcome(false);
+    setMainView('workstation');
     await authService.login();
   }, []);
   const handleWelcomeCustomModel = useCallback(() => {
     setShowWelcome(false);
+    setMainView('workstation');
     handleShowSettings({ initialTab: 'model' });
   }, [handleShowSettings]);
 
@@ -1082,6 +1116,18 @@ const App: React.FC = () => {
     return unsubscribe;
   }, [handleShowSettings]);
 
+  // Renderer custom event: open settings (e.g. configure model when Youdao cloud is off)
+  useEffect(() => {
+    const handleRequestOpenSettings = (event: Event) => {
+      const detail = (event as CustomEvent<{ initialTab?: SettingsOpenOptions['initialTab'] }>).detail;
+      handleShowSettings(detail?.initialTab ? { initialTab: detail.initialTab } : undefined);
+    };
+    window.addEventListener('app:requestOpenSettings', handleRequestOpenSettings);
+    return () => {
+      window.removeEventListener('app:requestOpenSettings', handleRequestOpenSettings);
+    };
+  }, [handleShowSettings]);
+
   // 监听托盘菜单新建任务的 IPC 事件
   useEffect(() => {
     const unsubscribe = window.electron.ipcRenderer.on('app:newTask', () => {
@@ -1093,8 +1139,17 @@ const App: React.FC = () => {
   useEffect(() => {
     const unsubscribe = window.electron.cowork.onOpenSessionFromNotification?.(({ sessionId }) => {
       setShowSettings(false);
-      setMainView('cowork');
-      void coworkService.loadSession(sessionId);
+      void (async () => {
+        const result = await window.electron?.cowork?.getSession?.(sessionId);
+        const session = result?.success ? result.session : null;
+        if (isWorkstationCoworkSession(session)) {
+          // Workstation chats stay in the department UI — never open them in Agent mode.
+          setMainView('workstation');
+          return;
+        }
+        setMainView('cowork');
+        void coworkService.loadSession(sessionId);
+      })();
     });
     void window.electron.cowork.notifyOpenSessionFromNotificationReady?.();
     return unsubscribe;
@@ -1112,8 +1167,8 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!isInitialized) return;
 
-    // Enterprise mode: completely skip update detection
-    if (enterpriseConfig?.disableUpdate) return;
+    // Enterprise mode / Youdao cloud off: skip update detection
+    if (enterpriseConfig?.disableUpdate || !isYoudaoCloudEnabled()) return;
 
     let cancelled = false;
     let lastCheckTime = 0;
@@ -1233,7 +1288,9 @@ const App: React.FC = () => {
     return (
       <div className="h-screen overflow-hidden flex flex-col">
         {windowsStandaloneTitleBar}
-        <div className="flex-1 bg-surface" />
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 bg-surface text-secondary">
+          <span className="text-sm">{i18nService.t('loading')}</span>
+        </div>
         <EngineStartupOverlay bootstrapping />
       </div>
     );
@@ -1285,7 +1342,11 @@ const App: React.FC = () => {
     <SkinProvider>
       <SkinPresentationScope
         enabled
-        className="h-screen overflow-hidden flex flex-col bg-surface-raised"
+        className={`h-screen overflow-hidden flex flex-col ${
+          mainView === 'workstation' && workstationCinematicHome
+            ? 'swift-midnight-shell bg-[#070B1F]'
+            : 'bg-surface-raised'
+        }`}
       >
       {toastMessage && (
         <Toast
@@ -1300,11 +1361,11 @@ const App: React.FC = () => {
         aria-busy={isUpdateInteractionBlocked}
       >
         <Sidebar
-          onShowLogin={handleShowLogin}
           onShowSettings={handleShowSettings}
           activeView={mainView}
           onShowSkills={handleShowSkills}
           onShowCowork={handleShowCowork}
+          onShowWorkstation={handleShowWorkstation}
           onShowScheduledTasks={handleShowScheduledTasks}
           onShowKits={handleShowKits}
           onShowMcp={handleShowMcp}
@@ -1313,16 +1374,58 @@ const App: React.FC = () => {
           onToggleCollapse={handleToggleSidebar}
           onWidthChange={setSidebarWidth}
           updateNotice={!isSidebarCollapsed && !isUpdateInteractionBlocked ? updateCard : null}
-          hideAdBanner={isUpdateCardExpanded}
-          hideLogin={enterpriseConfig?.ui?.login === 'hide'}
+          hideAdBanner={isUpdateCardExpanded || !isYoudaoCloudEnabled()}
+          hideLogin={enterpriseConfig?.ui?.login === 'hide' || !isYoudaoCloudEnabled()}
+          hidden={mainView === 'workstation'}
         />
-        <div className={`flex-1 min-w-0 transition-[padding] duration-200 ease-out ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
+        <div
+          className={`flex-1 min-w-0 transition-[padding] duration-200 ease-out ${
+            mainView === 'workstation' ? '' : isSidebarCollapsed ? 'pl-1.5' : ''
+          }`}
+        >
+          {/* Workstation: full-bleed; keep mounted to preserve state */}
+          <div
+            className={
+              mainView === 'workstation'
+                ? 'relative h-full min-h-0 overflow-hidden'
+                : 'hidden'
+            }
+            aria-hidden={mainView !== 'workstation'}
+          >
+            <AppErrorBoundary>
+              <WorkstationApp
+                onEnterLobster={() => {
+                  const session = store.getState().cowork.currentSession
+                    ?? (store.getState().cowork.currentSessionId
+                      ? store.getState().cowork.sessions.find(
+                        (item) => item.id === store.getState().cowork.currentSessionId,
+                      )
+                      : null);
+                  if (isWorkstationCoworkSession(session)) {
+                    coworkService.clearSession({ restoreAgentSkills: true });
+                    agentService.switchAgent(AgentId.Main);
+                    void coworkService.loadSessions(AgentId.Main);
+                  }
+                  setMainView('cowork');
+                }}
+                onCinematicHomeChange={setWorkstationCinematicHome}
+              />
+            </AppErrorBoundary>
+          </div>
+
           <div
             data-skin-cowork-frame={mainView === 'cowork' ? 'true' : undefined}
-            data-skin-management-frame={mainView !== 'cowork' ? 'true' : undefined}
-            className="relative h-full min-h-0 rounded-xl border border-border bg-background overflow-hidden"
+            data-skin-management-frame={
+              mainView !== 'cowork' && mainView !== 'workstation' ? 'true' : undefined
+            }
+            className={
+              mainView === 'workstation'
+                ? 'hidden'
+                : 'relative h-full min-h-0 rounded-xl border border-border bg-background overflow-hidden'
+            }
+            aria-hidden={mainView === 'workstation'}
           >
-            {mainView !== 'cowork' && (
+            {mainView !== 'cowork' && mainView !== 'workstation' && (
               <SkinBackdrop variant={SkinBackdropVariant.Management} />
             )}
             <EngineStartupOverlay />
@@ -1359,18 +1462,21 @@ const App: React.FC = () => {
                 updateBadge={collapsedHeaderUpdateBadge}
               />
             ) : (
-              <CoworkView
-                onRequestAppSettings={privacyAgreed === true && !showWelcome ? handleShowSettings : undefined}
-                onShowSkills={handleShowSkills}
-                onShowKits={handleShowKits}
-                isSidebarCollapsed={isSidebarCollapsed}
-                onToggleSidebar={handleToggleSidebar}
-                onNewChat={handleNewChat}
-                updateBadge={collapsedHeaderUpdateBadge}
-                minimizedPermission={isPendingPermissionMinimized ? pendingPermission : null}
-                onRestorePermission={handleRestorePermission}
-                onRespondToPermission={handlePermissionResponse}
-              />
+              <div className={mainView === 'cowork' ? 'h-full' : 'hidden'} aria-hidden={mainView !== 'cowork'}>
+                <CoworkView
+                  onRequestAppSettings={privacyAgreed === true && !showWelcome ? handleShowSettings : undefined}
+                  onShowSkills={handleShowSkills}
+                  onShowKits={handleShowKits}
+                  onShowWorkstation={handleShowWorkstation}
+                  isSidebarCollapsed={isSidebarCollapsed}
+                  onToggleSidebar={handleToggleSidebar}
+                  onNewChat={handleNewChat}
+                  updateBadge={collapsedHeaderUpdateBadge}
+                  minimizedPermission={isPendingPermissionMinimized ? pendingPermission : null}
+                  onRestorePermission={handleRestorePermission}
+                  onRespondToPermission={handlePermissionResponse}
+                />
+              </div>
             )}
           </div>
         </div>
@@ -1387,6 +1493,22 @@ const App: React.FC = () => {
       <EngineFailureOverlay
         onRequestAppSettings={privacyAgreed === true && !showWelcome ? handleShowSettings : undefined}
         suspended={showSettings || showUpdateModal || isPermissionModalOpen || privacyAgreed === false || showWelcome}
+      />
+      <EditableTextContextMenu />
+      <CowPetHost
+        suspended={
+          // Only on 通用智能体 (cowork) or 工作站部门工作台 — not cinematic home / skills / kits / …
+          !(
+            mainView === 'cowork'
+            || (mainView === 'workstation' && !workstationCinematicHome)
+          )
+          || showSettings
+          || showUpdateModal
+          || isPermissionModalOpen
+          || privacyAgreed === false
+          || showWelcome
+          || isUpdateInteractionBlocked
+        }
       />
 
       {/* 设置窗口显示在所有主内容之上，但不影响主界面的交互 */}
@@ -1415,13 +1537,13 @@ const App: React.FC = () => {
         />
       )}
       {permissionModal}
-      {privacyAgreed === false && (
+      {privacyAgreed === false && isYoudaoCloudEnabled() && (
         <PrivacyDialog
           onAccept={handlePrivacyAccept}
           onReject={handlePrivacyReject}
         />
       )}
-      {showWelcome && (
+      {showWelcome && isYoudaoCloudEnabled() && (
         <WelcomeDialog
           onLogin={handleWelcomeLogin}
           onCustomModel={handleWelcomeCustomModel}

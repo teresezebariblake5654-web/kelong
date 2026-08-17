@@ -3,6 +3,8 @@ import { AgentId } from '@shared/agent';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
+import { isYoudaoCloudEnabled } from '../../shared/featureFlags';
+import { isWorkstationCoworkSession } from '../../shared/workstation/session';
 import { agentService } from '../services/agent';
 import { coworkService } from '../services/cowork';
 import { i18nService } from '../services/i18n';
@@ -37,10 +39,10 @@ import SidebarAdBanner from './SidebarAdBanner';
 
 interface SidebarProps {
   onShowSettings: () => void;
-  onShowLogin?: () => void;
-  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp';
+  activeView: 'workstation' | 'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp';
   onShowSkills: () => void;
   onShowCowork: () => void;
+  onShowWorkstation?: () => void;
   onShowScheduledTasks: () => void;
   onShowKits: () => void;
   onShowMcp: () => void;
@@ -53,6 +55,8 @@ interface SidebarProps {
    * promo banner while preserving it for a smooth return after collapse. */
   hideAdBanner?: boolean;
   hideLogin?: boolean;
+  /** Hide sidebar chrome entirely (e.g. full-bleed workstation). */
+  hidden?: boolean;
 }
 
 const DEFAULT_SIDEBAR_WIDTH = 244;
@@ -132,6 +136,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   activeView,
   onShowSkills,
   onShowCowork,
+  onShowWorkstation,
   onShowScheduledTasks,
   onShowKits,
   onShowMcp,
@@ -140,9 +145,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
   onWidthChange,
   updateNotice,
-  hideAdBanner,
-  hideLogin,
+  hideAdBanner: hideAdBannerProp,
+  hideLogin: hideLoginProp,
+  hidden,
 }) => {
+  const hideAdBanner = hideAdBannerProp ?? !isYoudaoCloudEnabled();
+  const hideLogin = hideLoginProp ?? !isYoudaoCloudEnabled();
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
   const agents = useSelector((state: RootState) => state.agent.agents);
   const sessions = useSelector(selectCoworkSessions);
@@ -253,6 +261,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   }, [isCollapsed]);
 
   const handleSelectSession = async (session: CoworkSessionSummary) => {
+    if (isWorkstationCoworkSession(session)) {
+      return;
+    }
     const agentId = session.agentId?.trim() || AgentId.Main;
     try {
       if (agentId !== currentAgentId) {
@@ -510,8 +521,9 @@ const Sidebar: React.FC<SidebarProps> = ({
       data-skin-sidebar="true"
       className={`relative shrink-0 overflow-hidden bg-surface-raised ${
         isResizing ? '' : 'sidebar-transition'
-      }`}
-      style={{ width: isCollapsed ? 0 : sidebarWidth }}
+      } ${hidden ? 'hidden' : ''}`}
+      style={{ width: hidden || isCollapsed ? 0 : sidebarWidth }}
+      aria-hidden={hidden || undefined}
     >
       <div
         className={`flex h-full flex-col transition-opacity ease-out ${
@@ -538,6 +550,19 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
         <div className="mt-[5px] space-y-0.5 px-3">
+          {onShowWorkstation ? (
+            <button
+              type="button"
+              onClick={() => {
+                reportSidebarAction('open_workstation', { activeView, isCollapsed });
+                onShowWorkstation();
+              }}
+              className={sidebarNavItemClassName}
+            >
+              <ComposeIcon className={sidebarCreateIconClassName} />
+              返回AI员工助手
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => {

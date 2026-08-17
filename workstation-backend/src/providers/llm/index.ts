@@ -101,7 +101,7 @@ export function getActiveLlmModel(): string {
 export type { LlmAnalyzeRequest, LlmAnalyzeResult, LlmProvider } from './types';
 export type { AiProviderId } from './providerCatalog';
 export { AI_PROVIDER_IDS, AI_PROVIDER_PRESETS } from './providerCatalog';
-export { mapUpstreamLlmError } from './openaiCompatible.provider';
+export { mapUpstreamLlmError, extractJsonObject } from './openaiCompatible.provider';
 export {
   getLlmRuntimeState,
   initLlmRuntimeFromEnv,

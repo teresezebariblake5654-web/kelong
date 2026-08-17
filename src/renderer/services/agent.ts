@@ -66,6 +66,7 @@ class AgentService {
   }
 
   async createAgent(request: {
+    id?: string;
     name: string;
     description?: string;
     systemPrompt?: string;

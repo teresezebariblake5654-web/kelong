@@ -12,6 +12,8 @@ import {
   type CoworkContextUsageRefreshMode as CoworkContextUsageRefreshModeType,
   CoworkContextUsageSource,
 } from '../../shared/cowork/constants';
+import { AgentId } from '../../shared/agent/constants';
+import { isWorkstationCoworkSession } from '../../shared/workstation/session';
 import { normalizeCoworkGoal } from '../../shared/cowork/goal';
 import type { CoworkMessageRailIndexItem } from '../../shared/cowork/rail';
 import {
@@ -196,8 +198,8 @@ class CoworkService {
     // Load initial config
     await this.loadConfig();
 
-    // Load sessions list
-    await this.loadSessions();
+    // Load sessions list (general Agent only — workstation sessions stay out of sidebar)
+    await this.loadSessions(AgentId.Main);
 
     // Set up stream listeners
     this.setupStreamListeners();
@@ -238,7 +240,7 @@ class CoworkService {
       if (!sessionExists) {
         // Session was created by IM or another source, refresh the session list
         console.log('[CoworkService] onStreamMessage: session NOT found in Redux, calling loadSessions...');
-        await this.loadSessions();
+        await this.loadSessions(AgentId.Main);
         const newState = store.getState().cowork;
         const nowExists = newState.sessions.some(s => s.id === sessionId);
         console.log('[CoworkService] onStreamMessage: after loadSessions, sessionExists=', nowExists, 'totalSessions=', newState.sessions.length);
@@ -421,7 +423,7 @@ class CoworkService {
         'debug',
         `received sessions change; active=${beforeState.currentSessionId ?? 'none'}; changed=${changeScope}.`,
       );
-      void this.loadSessions().then(() => {
+      void this.loadSessions(AgentId.Main).then(() => {
         const state = store.getState().cowork;
 
         // Reload the active conversation only when that session changed.
@@ -835,7 +837,17 @@ class CoworkService {
 
     const result = await cowork.startSession(options);
     if (result.success && result.session) {
-      store.dispatch(addSession(result.session));
+      // Department work-agent sessions must not pollute the general Agent sidebar/Redux list.
+      if (!isWorkstationCoworkSession(result.session) && !isWorkstationCoworkSession({
+        agentId: options.agentId ?? result.session.agentId,
+        title: result.session.title,
+        cwd: result.session.cwd,
+      })) {
+        store.dispatch(addSession(result.session));
+      } else {
+        // Do not flip global Agent streaming for workstation turns.
+        store.dispatch(setStreaming(false));
+      }
       if (result.session.status !== 'running') {
         store.dispatch(setStreaming(false));
       }
@@ -1187,6 +1199,10 @@ class CoworkService {
     try {
       const result = await cowork.forkSession(options);
       if (result.success && result.session) {
+        if (isWorkstationCoworkSession(result.session)) {
+          console.warn('[CoworkFork] refusing to add workstation fork into Agent sidebar');
+          return { session: null, error: 'Workstation sessions cannot be forked into Agent mode' };
+        }
         store.dispatch(addSession(result.session));
         this.setCurrentSessionStreaming(result.session.id, false, 'fork_session_created');
         console.log(`[CoworkFork] renderer received forked session ${result.session.id} successfully`);
@@ -1306,6 +1322,13 @@ class CoworkService {
         if (requestId !== this.latestLoadSessionRequestId) {
           this.logDiagnostic('debug', `ignored stale session load result for session ${sessionId}.`);
           return result.session;
+        }
+        if (isWorkstationCoworkSession(result.session)) {
+          this.logDiagnostic(
+            'warn',
+            `refused to open workstation session ${sessionId} in Agent UI.`,
+          );
+          return null;
         }
         let session = result.session;
         if (
@@ -1609,6 +1632,7 @@ class CoworkService {
     query?: string;
     limit?: number;
     offset?: number;
+    agentId?: string;
   }): Promise<CoworkUserMemoryEntry[]> {
     const api = window.electron?.cowork?.listMemoryEntries;
     if (!api) return [];
@@ -1619,6 +1643,7 @@ class CoworkService {
 
   async createMemoryEntry(input: {
     text: string;
+    agentId?: string;
   }): Promise<CoworkUserMemoryEntry | null> {
     const api = window.electron?.cowork?.createMemoryEntry;
     if (!api) return null;
@@ -1630,6 +1655,7 @@ class CoworkService {
   async updateMemoryEntry(input: {
     id: string;
     text: string;
+    agentId?: string;
   }): Promise<CoworkUserMemoryEntry | null> {
     const api = window.electron?.cowork?.updateMemoryEntry;
     if (!api) return null;
@@ -1638,34 +1664,36 @@ class CoworkService {
     return result.entry;
   }
 
-  async deleteMemoryEntry(input: { id: string }): Promise<boolean> {
+  async deleteMemoryEntry(input: { id: string; agentId?: string }): Promise<boolean> {
     const api = window.electron?.cowork?.deleteMemoryEntry;
     if (!api) return false;
     const result = await api(input);
     return Boolean(result?.success);
   }
 
-  async getMemoryStats(): Promise<CoworkMemoryStats | null> {
+  async getMemoryStats(input?: { agentId?: string }): Promise<CoworkMemoryStats | null> {
     const api = window.electron?.cowork?.getMemoryStats;
     if (!api) return null;
-    const result = await api();
+    const result = await api(input);
     if (!result?.success || !result.stats) return null;
     return result.stats;
   }
 
-  async readMemoryFileRaw(): Promise<string | null> {
+  async readMemoryFileRaw(input?: { agentId?: string }): Promise<string | null> {
     const api = window.electron?.cowork?.readMemoryFileRaw;
     if (!api) return null;
-    const result = await api();
+    const result = await api(input);
     if (!result?.success) return null;
     return result.content ?? '';
   }
 
-  async writeMemoryFileRaw(content: string): Promise<{ success: boolean; error?: string }> {
+  async writeMemoryFileRaw(
+    content: string,
+    options?: { agentId?: string },
+  ): Promise<{ success: boolean; error?: string }> {
     const api = window.electron?.cowork?.writeMemoryFileRaw;
     if (!api) return { success: false, error: 'Memory raw API unavailable' };
-    const result = await api({ content });
-    return result ?? { success: false };
+    return api({ content, agentId: options?.agentId });
   }
 
   async readBootstrapFile(filename: string, options?: { agentId?: string }): Promise<string> {
@@ -1743,6 +1771,35 @@ class CoworkService {
       return result.status;
     }
     return this.openClawStatus;
+  }
+
+  async recoverOpenClawGatewayFromCrash(): Promise<OpenClawEngineStatus | null> {
+    const engineApi = window.electron?.openclaw?.engine;
+    if (!engineApi?.recoverFromCrash) {
+      return null;
+    }
+    const result = await engineApi.recoverFromCrash();
+    if (result?.status) {
+      this.notifyOpenClawStatus(result.status);
+      return result.status;
+    }
+    return this.openClawStatus;
+  }
+
+  async revealOpenClawGatewayLog(): Promise<{ success: boolean; error?: string }> {
+    const engineApi = window.electron?.openclaw?.engine;
+    if (!engineApi?.getGatewayLogPath || !window.electron?.shell?.showItemInFolder) {
+      return { success: false, error: i18nService.t('openClawGatewayLogUnavailable') };
+    }
+    const result = await engineApi.getGatewayLogPath();
+    if (!result?.success || !result.path) {
+      return { success: false, error: result?.error || i18nService.t('openClawGatewayLogUnavailable') };
+    }
+    const revealed = await window.electron.shell.showItemInFolder(result.path);
+    return {
+      success: Boolean(revealed?.success),
+      error: revealed?.success ? undefined : (revealed?.error || i18nService.t('openClawGatewayLogUnavailable')),
+    };
   }
 
   async repairOpenClawGatewayState(): Promise<OpenClawGatewayRepairResult> {

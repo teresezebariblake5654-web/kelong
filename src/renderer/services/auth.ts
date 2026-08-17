@@ -1,4 +1,5 @@
 import { ProviderName } from '@shared/providers';
+import { isYoudaoCloudEnabled } from '../../shared/featureFlags';
 
 import { store } from '../store';
 import {
@@ -86,7 +87,7 @@ export function mapPricingCatalogTextModelsToServerModels(
     const modelName = readString(model.modelName) || modelId;
     const provider = readString(model.providerLabel)
       || readString(model.provider)
-      || 'LobsterAI';
+      || '火星 AI';
     const contextWindow = readPositiveNumber(model.contextWindow);
     const costMultiplier = readPositiveNumber(model.costMultiplier);
 
@@ -175,6 +176,10 @@ class AuthService {
    * Initiate login (opens system browser).
    */
   async login() {
+    if (!isYoudaoCloudEnabled()) {
+      writeAuthRendererLog('info', 'login skipped because Youdao cloud is disabled');
+      return;
+    }
     const attemptId = ++this.loginAttemptSequence;
     writeAuthRendererLog('info', `login attempt ${attemptId} started`);
 
@@ -345,6 +350,10 @@ class AuthService {
    * Load available models from server and dispatch to store.
    */
   private async loadServerModels() {
+    if (!isYoudaoCloudEnabled()) {
+      store.dispatch(clearServerModels());
+      return;
+    }
     try {
       const modelsResult = await window.electron.auth.getModels();
       if (modelsResult.success && modelsResult.models) {

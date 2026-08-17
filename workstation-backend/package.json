@@ -5,6 +5,8 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "worker:leads": "tsx src/workers/start-lead-discovery-worker.ts",
+    "worker:leads:dev": "tsx watch src/workers/start-lead-discovery-worker.ts",
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
@@ -22,8 +24,12 @@
     "check": "npm run typecheck && npm run db:validate",
     "test": "vitest run",
     "test:auth": "vitest run tests/auth.integration.test.ts",
-    "test:leads": "vitest run tests/leadDiscovery.test.ts tests/leads.routes.test.ts",
-    "smoke:leads": "tsx scripts/smoke-lead-discovery.ts"
+    "test:leads": "vitest run tests/leadDiscovery.test.ts tests/leads.routes.test.ts tests/leadPersistence.test.ts tests/leadScore.schema.test.ts tests/leadScore.service.test.ts tests/leadPool.service.test.ts tests/leadDiscovery.queue.test.ts",
+    "smoke:leads": "tsx scripts/smoke-lead-discovery.ts",
+    "smoke:leads:persist": "tsx scripts/smoke-lead-discovery-persist.ts",
+    "smoke:leads:queue": "tsx scripts/smoke-lead-discovery-queue.ts",
+    "smoke:leads:score": "tsx scripts/smoke-lead-score.ts",
+    "smoke:leads:pool": "tsx scripts/smoke-lead-pool.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -34,11 +40,13 @@
     "@prisma/client": "^6.5.0",
     "ajv": "^8.20.0",
     "bcrypt": "^6.0.0",
+    "bullmq": "^6.1.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "express-rate-limit": "^8.5.2",
+    "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^9.0.3",

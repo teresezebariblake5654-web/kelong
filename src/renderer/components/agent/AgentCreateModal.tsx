@@ -1,5 +1,6 @@
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import { DefaultAgentAvatarIcon } from '@shared/agent/avatar';
+import { isImBotEnabled } from '@shared/featureFlags';
 import type { Platform } from '@shared/platform';
 import { PlatformRegistry } from '@shared/platform';
 import { ProviderName } from '@shared/providers';
@@ -496,7 +497,9 @@ const AgentCreateModal: React.FC<AgentCreateModalProps> = ({
     { key: AgentDetailTab.User, label: i18nService.t('coworkBootstrapUserTitle') },
     { key: AgentDetailTab.Skills, label: i18nService.t('agentTabSkills') },
     { key: AgentDetailTab.Collaboration, label: i18nService.t('agentTabCollaboration') },
-    { key: AgentDetailTab.Im, label: i18nService.t('agentTabIM') },
+    ...(isImBotEnabled()
+      ? [{ key: AgentDetailTab.Im, label: i18nService.t('agentTabIM') }]
+      : []),
   ];
 
   const renderTextEditor = (

@@ -25,6 +25,7 @@ import { CoworkSystemMessageKind } from '../common/coworkSystemMessages';
 import { buildGoalSettingMessageMetadata } from '../common/goalCommandDisplay';
 import type { OpenClawSessionPatch } from '../common/openclawSession';
 import { buildSessionTitleFromInput } from '../common/sessionTitle';
+import { buildPublicIdentityPolicyPrompt } from '../common/publicIdentityPrompt';
 import { buildScheduledTaskEnginePrompt } from '../scheduledTask/enginePrompt';
 import {
   migrateScheduledTaskRunsToOpenclaw,
@@ -136,13 +137,14 @@ import {
 import type { ShellOpenFailureReason as ShellOpenFailureReasonType } from '../shared/shell/constants';
 import { type ShellGetBrowserAppsInput, ShellIpc, ShellOpenFailureReason } from '../shared/shell/constants';
 import { AgentManager } from './agentManager';
-import { APP_NAME, APP_USER_MODEL_ID, DB_FILENAME } from './appConstants';
+import { APP_NAME, APP_DATA_DIR_NAME, APP_USER_MODEL_ID, DB_FILENAME } from './appConstants';
 import { createLocalFileProtocolResponse } from './artifactLocalFileProtocol';
 import { authQuotaGateStateFromQuota, AuthSubscriptionStatus, createDefaultAuthQuotaGateState, normalizeAuthQuota } from './authQuota';
 import { type AutoLaunchStatus, getAutoLaunchStatus, isAutoLaunched, setAutoLaunchEnabled } from './autoLaunchManager';
 import { getRecentComputerUseLogEntries } from './computerUse/computerUseLogs';
 import { type CoworkForkContextMessage, type CoworkMessage, CoworkStore } from './coworkStore';
 import { setLanguage, t } from './i18n';
+import { installEditableContextMenu, installHiddenEditMenu } from './editableTextMenu';
 import { IMGatewayConfig, IMGatewayManager } from './im';
 import {
   approvePairingCode,
@@ -310,6 +312,7 @@ import {
   readBootstrapFile,
   readMemoryEntries,
   readMemoryFileRaw,
+  readMemoryMdSnippet,
   resolveMemoryFilePath,
   searchMemoryEntries,
   updateMemoryEntry,
@@ -319,6 +322,7 @@ import {
 import { collectReferencedEnvVarNames, pickReferencedSecretEnvVars } from './libs/openclawSecretEnv';
 import { startOpenClawTokenProxy, stopOpenClawTokenProxy } from './libs/openclawTokenProxy';
 import { migrateMainAgentWorkspace } from './libs/openclawWorkspaceMigration';
+import { migrateWorkstationSessionsOffMain } from './libs/workstationAgentMigration';
 import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
 import { sanitizeUrlForLog, serializeForLog } from './libs/sanitizeForLog';
 import { packageNodeServiceDeployment } from './libs/shareDeployment/nodeServiceDeploymentPackager';
@@ -393,6 +397,13 @@ import {
   resolveInitialAppWindowState,
 } from './windowState';
 import { createWindowStatePersistManager } from './windowStatePersist';
+import {
+  getByOpenClawSessionId,
+  listByDepartment,
+  removeWorkstationSession,
+  upsertWorkstationSession,
+  type WorkstationSessionRecord,
+} from './workstationSessionRegistry';
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -1396,7 +1407,7 @@ const resolveInlineAttachmentDir = (cwd?: string): string => {
       return path.join(resolved, COWORK_TEMP_DIR_NAME, COWORK_TEMP_ATTACHMENTS_DIR_NAME, 'manual');
     }
   }
-  return path.join(app.getPath('temp'), 'lobsterai', 'attachments');
+  return path.join(app.getPath('temp'), 'workhorseai', 'attachments');
 };
 
 const ensurePngFileName = (value: string): string => {
@@ -1606,7 +1617,7 @@ const savePngWithDialog = async (
 
 const configureUserDataPath = (): void => {
   const appDataPath = app.getPath('appData');
-  const preferredUserDataPath = path.join(appDataPath, APP_NAME);
+  const preferredUserDataPath = path.join(appDataPath, APP_DATA_DIR_NAME);
   const currentUserDataPath = app.getPath('userData');
 
   if (currentUserDataPath !== preferredUserDataPath) {
@@ -1620,7 +1631,7 @@ let startupDataMigrationRestoreResult: DataMigrationLastRestoreResult | null = n
 try {
   startupDataMigrationRestoreResult = performPendingDataMigrationRestoreSync({
     userDataPath: app.getPath('userData'),
-    rollbackRootPath: path.join(app.getPath('appData'), `${APP_NAME}-migration-rollbacks`),
+    rollbackRootPath: path.join(app.getPath('appData'), `${APP_DATA_DIR_NAME}-migration-rollbacks`),
   });
 } catch (error) {
   console.error('[DataMigration] pending restore failed before logger initialization:', error);
@@ -2033,6 +2044,18 @@ const resolveAgentDefaultWorkingDirectory = (agentId?: string): string => {
 const resolveSessionWorkingDirectory = (options: { cwd?: string; agentId?: string }): string => {
   const explicitWorkingDirectory = options.cwd?.trim();
   if (explicitWorkingDirectory) return explicitWorkingDirectory;
+
+  const agentId = options.agentId?.trim() || '';
+  if (agentId.startsWith('workstation-') || agentId.startsWith('workstation:')) {
+    const departmentId = agentId.replace(/^workstation[-:]/, '') || 'default';
+    const dir = path.join(app.getPath('userData'), 'workstation', departmentId);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+  if (agentId === 'lobster' || !agentId || agentId === 'main') {
+    // Default lobster isolation root when no explicit cwd is provided for main agent
+    // still prefers agent/config workingDirectory via resolveAgentDefaultWorkingDirectory.
+  }
   return resolveAgentDefaultWorkingDirectory(options.agentId);
 };
 
@@ -3211,12 +3234,74 @@ const refreshImSessionWorkingDirectoriesForAgent = (agentId: string): number => 
 
 function mergeCoworkSystemPrompt(systemPrompt?: string): string | undefined {
   const scheduledTaskPrompt = buildScheduledTaskEnginePrompt();
+  const publicIdentityPrompt = buildPublicIdentityPolicyPrompt();
   const normalizedSystemPrompt = systemPrompt?.trim() || '';
-  if (normalizedSystemPrompt && normalizedSystemPrompt.includes(scheduledTaskPrompt)) {
-    return normalizedSystemPrompt;
-  }
-  const sections = [scheduledTaskPrompt, normalizedSystemPrompt].filter(Boolean);
+  const hasScheduled = normalizedSystemPrompt.includes(scheduledTaskPrompt);
+  const hasIdentity = normalizedSystemPrompt.includes(publicIdentityPrompt);
+  const sections = [
+    hasScheduled ? '' : scheduledTaskPrompt,
+    normalizedSystemPrompt,
+    hasIdentity ? '' : publicIdentityPrompt,
+  ].filter(Boolean);
   return sections.length > 0 ? sections.join('\n\n') : undefined;
+}
+
+function isWorkstationAgentIdMain(agentId: string): boolean {
+  return agentId.startsWith('workstation-') || agentId.startsWith('workstation:');
+}
+
+/**
+ * Inject durable persona/preferences from MEMORY.md only.
+ * Daily chats stay isolated — do not list sibling sessions or push cross-chat recall.
+ */
+function buildAgentConnectedContinuityPrompt(options: {
+  agentId: string;
+}): string | undefined {
+  const agentId = options.agentId.trim() || AgentId.Main;
+  if (isWorkstationAgentIdMain(agentId)) return undefined;
+
+  try {
+    const stateDir = getOpenClawEngineManager().getStateDir();
+    const agentWorkspace = agentId === AgentId.Main
+      ? getMainAgentWorkspacePath(stateDir)
+      : path.join(stateDir, `workspace-${agentId}`);
+    const memorySnippet = readMemoryMdSnippet(agentWorkspace);
+    if (!memorySnippet) return undefined;
+    return [
+      '[AGENT_CONNECTED_MEMORY]',
+      'Long-term persona and preferences for this agent (MEMORY.md).',
+      'Each chat session is otherwise isolated — do not dig through other conversations unless the user explicitly asks.',
+      'Prefer writing lasting facts/preferences back to MEMORY.md.',
+      '',
+      memorySnippet,
+    ].join('\n');
+  } catch (error) {
+    console.warn('[Cowork] failed to read agent MEMORY.md for continuity inject:', error);
+    return undefined;
+  }
+}
+
+function mergeAgentContinuityIntoSystemPrompt(
+  basePrompt: string | undefined,
+  continuity: string | undefined,
+  options?: { refresh?: boolean },
+): string | undefined {
+  if (!continuity?.trim()) return basePrompt;
+
+  let cleaned = (basePrompt ?? '').trim();
+  if (
+    options?.refresh
+    || cleaned.includes('[AGENT_RECENT_CHATS]')
+    || cleaned.includes('[AGENT_CONNECTED_MEMORY]')
+  ) {
+    cleaned = cleaned
+      .replace(/\n*\[AGENT_CONNECTED_MEMORY\][\s\S]*?(?=\n\[|$)/g, '')
+      .replace(/\n*\[AGENT_RECENT_CHATS\][\s\S]*?(?=\n\[|$)/g, '')
+      .trim();
+  }
+
+  if (!cleaned) return mergeCoworkSystemPrompt(continuity);
+  return mergeCoworkSystemPrompt(`${continuity}\n\n${cleaned}`);
 }
 
 type CoworkImageAttachmentMain = {
@@ -3303,12 +3388,20 @@ const BROWSER_ANNOTATION_PRELOAD_PATH = app.isPackaged
 // 获取应用图标路径（Windows 使用 .ico，其他平台使用 .png）
 const getAppIconPath = (): string | undefined => {
   if (process.platform !== 'win32' && process.platform !== 'linux') return undefined;
-  const basePath = app.isPackaged
-    ? path.join(process.resourcesPath, 'tray')
-    : path.join(__dirname, '..', 'resources', 'tray');
-  return process.platform === 'win32'
-    ? path.join(basePath, 'tray-icon.ico')
-    : path.join(basePath, 'tray-icon.png');
+  const candidates = app.isPackaged
+    ? [
+        path.join(process.resourcesPath, 'tray', process.platform === 'win32' ? 'tray-icon.ico' : 'tray-icon.png'),
+      ]
+    : process.platform === 'win32'
+      ? [
+          path.join(__dirname, '..', 'build', 'icons', 'win', 'icon.ico'),
+          path.join(__dirname, '..', 'resources', 'tray', 'tray-icon.ico'),
+        ]
+      : [
+          path.join(__dirname, '..', 'resources', 'tray', 'tray-icon.png'),
+          path.join(__dirname, '..', 'build', 'icons', 'png', '512x512.png'),
+        ];
+  return candidates.find((candidate) => fs.existsSync(candidate));
 };
 
 const getNotificationIconPath = (): string | null => {
@@ -3812,11 +3905,11 @@ if (!gotTheLock) {
   if (!app.isPackaged) {
     // In dev mode, setAsDefaultProtocolClient needs the electron exe path
     // and the app entry point as extra args so the OS can relaunch correctly
-    app.setAsDefaultProtocolClient('lobsterai', process.execPath, [
+    app.setAsDefaultProtocolClient('workhorseai', process.execPath, [
       path.resolve(process.argv[1]),
     ]);
   } else {
-    app.setAsDefaultProtocolClient('lobsterai');
+    app.setAsDefaultProtocolClient('workhorseai');
   }
 
   const authCallbackRouter = new AuthCallbackRouter({
@@ -4041,7 +4134,7 @@ if (!gotTheLock) {
             ? [
                 {
                   archiveName: 'install-timing.log',
-                  filePath: path.join(app.getPath('appData'), 'LobsterAI', 'install-timing.log'),
+                  filePath: path.join(app.getPath('appData'), APP_DATA_DIR_NAME, 'install-timing.log'),
                 },
               ]
             : []),
@@ -6450,6 +6543,36 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle(OpenClawEngineIpc.RecoverFromCrash, async () => {
+    try {
+      const manager = getOpenClawEngineManager();
+      const status = await manager.recoverFromGatewayCrash('ipc-oom-recovery');
+      return {
+        success: status.phase === 'running' || status.phase === 'ready' || status.phase === 'starting',
+        status,
+      };
+    } catch (error) {
+      const manager = getOpenClawEngineManager();
+      return {
+        success: false,
+        status: manager.getStatus(),
+        error: error instanceof Error ? error.message : 'Failed to recover OpenClaw gateway',
+      };
+    }
+  });
+
+  ipcMain.handle(OpenClawEngineIpc.GetGatewayLogPath, async () => {
+    try {
+      const manager = getOpenClawEngineManager();
+      return { success: true, path: manager.getGatewayLogPath() };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to resolve gateway log path',
+      };
+    }
+  });
+
   ipcMain.handle(OpenClawEngineIpc.RepairGatewayState, async () => {
     try {
       return await repairOpenClawGatewayState();
@@ -6516,7 +6639,7 @@ if (!gotTheLock) {
       console.error('[DataMigration] backup failed:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to back up LobsterAI data',
+        error: error instanceof Error ? error.message : 'Failed to back up Workhorse AI data',
       };
     }
   });
@@ -6554,7 +6677,7 @@ if (!gotTheLock) {
 
       const restoreResult = performDataMigrationRestoreSync({
         userDataPath: app.getPath('userData'),
-        rollbackRootPath: path.join(app.getPath('appData'), `${APP_NAME}-migration-rollbacks`),
+        rollbackRootPath: path.join(app.getPath('appData'), `${APP_DATA_DIR_NAME}-migration-rollbacks`),
         archivePath,
       });
       const success = restoreResult?.status === DataMigrationRestoreStatus.Success;
@@ -6575,11 +6698,11 @@ if (!gotTheLock) {
         success,
         scheduledRestart: rendererReleased,
         rollbackPath: restoreResult?.rollbackPath,
-        error: success ? undefined : restoreResult?.error || 'Failed to import LobsterAI data backup',
+        error: success ? undefined : restoreResult?.error || 'Failed to import Workhorse AI data backup',
       };
     } catch (error) {
       isCleanupInProgress = false;
-      const message = error instanceof Error ? error.message : 'Failed to import LobsterAI data backup';
+      const message = error instanceof Error ? error.message : 'Failed to import Workhorse AI data backup';
       console.error('[DataMigration] restore scheduling failed:', error);
       if (rendererReleased) {
         dialog.showErrorBox(t('dataMigrationRestoreDialogTitle'), message);
@@ -6833,8 +6956,13 @@ if (!gotTheLock) {
 
         const coworkStoreInstance = getCoworkStore();
         const config = coworkStoreInstance.getConfig();
-        const systemPrompt = mergeCoworkSystemPrompt(options.systemPrompt ?? config.systemPrompt);
-        const persistedSystemPrompt = containsPlanModePrompt(systemPrompt)
+        const sessionAgentId = options.agentId?.trim() || AgentId.Main;
+        let systemPrompt = mergeCoworkSystemPrompt(options.systemPrompt ?? config.systemPrompt);
+        systemPrompt = mergeAgentContinuityIntoSystemPrompt(
+          systemPrompt,
+          buildAgentConnectedContinuityPrompt({ agentId: sessionAgentId }),
+        );
+        const persistedSystemPrompt = containsPlanModePrompt(systemPrompt ?? '')
           ? mergeCoworkSystemPrompt(config.systemPrompt)
           : systemPrompt;
         const selectedTaskDirectory = resolveSessionWorkingDirectory({
@@ -7046,9 +7174,15 @@ if (!gotTheLock) {
         const existingSession = coworkStoreInstance.getSession(options.sessionId);
         const config = coworkStoreInstance.getConfig();
         const hasLegacyPersistedPlanMode = containsPlanModePrompt(existingSession?.systemPrompt);
-        const continuationSystemPrompt = mergeCoworkSystemPrompt(
+        const sessionAgentId = existingSession?.agentId?.trim() || AgentId.Main;
+        let continuationSystemPrompt = mergeCoworkSystemPrompt(
           options.systemPrompt
             ?? (hasLegacyPersistedPlanMode ? config.systemPrompt : existingSession?.systemPrompt),
+        );
+        continuationSystemPrompt = mergeAgentContinuityIntoSystemPrompt(
+          continuationSystemPrompt,
+          buildAgentConnectedContinuityPrompt({ agentId: sessionAgentId }),
+          { refresh: true },
         );
         if (hasLegacyPersistedPlanMode) {
           coworkStoreInstance.updateSession(options.sessionId, {
@@ -7421,6 +7555,15 @@ if (!gotTheLock) {
         }
         const coworkStoreInstance = getCoworkStore();
         coworkStoreInstance.updateSession(options.sessionId, { title }, { touchUpdatedAt: false });
+        const session = coworkStoreInstance.getSession(options.sessionId);
+        if (session && !isWorkstationAgentIdMain(session.agentId || AgentId.Main)) {
+          void getCoworkEngineRouter().patchSession(options.sessionId, { label: title }).catch((error: unknown) => {
+            console.debug(
+              '[Cowork] skipped OpenClaw label sync after rename:',
+              error instanceof Error ? error.message : String(error),
+            );
+          });
+        }
         return { success: true };
       } catch (error) {
         return {
@@ -7550,12 +7693,49 @@ if (!gotTheLock) {
         const searchQuery = options?.searchQuery?.trim() ?? '';
         const store = getCoworkStore();
         const startedAt = searchQuery ? Date.now() : 0;
-        const sessions = searchQuery
+        let sessions = searchQuery
           ? store.searchSessions({ query: searchQuery, limit, offset, agentId })
           : store.listSessions(limit, offset, agentId);
-        const total = searchQuery
+        let total = searchQuery
           ? store.countSearchSessions({ query: searchQuery, agentId })
           : store.countSessions(agentId);
+
+        // Lobster sidebar: hide workstation-isolated sessions unless explicitly querying that agent.
+        const requestingWorkstationAgent = Boolean(
+          agentId?.trim().startsWith('workstation-') || agentId?.trim().startsWith('workstation:'),
+        );
+        if (!requestingWorkstationAgent) {
+          const workstationRootNorm = path.normalize(path.join(app.getPath('userData'), 'workstation'));
+          const isUnderWorkstationRoot = (cwd?: string | null) => {
+            if (!cwd) return false;
+            const normalized = path.normalize(cwd);
+            return (
+              normalized === workstationRootNorm ||
+              normalized.startsWith(workstationRootNorm + path.sep)
+            );
+          };
+          const before = sessions.length;
+          sessions = sessions.filter((session) => {
+            const sid = String(session.agentId || '');
+            if (sid.startsWith('workstation-') || sid.startsWith('workstation:')) return false;
+            const title = String(session.title || '').trim();
+            if (title.startsWith('[WS:')) return false;
+            const full = store.getSession(session.id, 0);
+            if (isUnderWorkstationRoot(full?.cwd)) return false;
+            // Also hide any OpenClaw session ids recorded in workstation registry.
+            try {
+              if (getByOpenClawSessionId(session.id)) return false;
+            } catch {
+              // registry helper may be unavailable during early boot
+            }
+            return true;
+          });
+          if (sessions.length !== before) {
+            // Approximate total after filter when page mixed; prefer under-count over leaking.
+            total = Math.max(sessions.length, total - (before - sessions.length));
+          }
+        }
+
         if (searchQuery) {
           console.debug(
             `[CoworkIPC] searched sessions; query length ${searchQuery.length}, returned ${sessions.length} of ${total} from offset ${offset} in ${Date.now() - startedAt}ms.`,
@@ -7567,6 +7747,209 @@ if (!gotTheLock) {
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Failed to list sessions',
+        };
+      }
+    },
+  );
+
+  const resolveWorkstationPaths = (departmentId?: string) => {
+    const userData = app.getPath('userData');
+    const workstationRoot = path.join(userData, 'workstation');
+    const lobsterRoot = path.join(userData, 'lobster');
+    const dept = (departmentId || 'default').trim().replace(/[\\/]/g, '_') || 'default';
+    const departmentPath = path.join(workstationRoot, dept);
+    return { userData, workstationRoot, lobsterRoot, departmentPath, departmentId: dept };
+  };
+
+  ipcMain.handle('workstation:getUserDataPath', async (_event, departmentId?: string) => {
+    return resolveWorkstationPaths(departmentId);
+  });
+
+  ipcMain.handle('workstation:ensureDirs', async (_event, departmentId?: string) => {
+    const paths = resolveWorkstationPaths(departmentId);
+    fs.mkdirSync(paths.workstationRoot, { recursive: true });
+    fs.mkdirSync(path.join(paths.workstationRoot, '_registry'), { recursive: true });
+    fs.mkdirSync(path.join(paths.workstationRoot, 'memory', paths.departmentId), { recursive: true });
+    fs.mkdirSync(paths.lobsterRoot, { recursive: true });
+    fs.mkdirSync(paths.departmentPath, { recursive: true });
+    return paths;
+  });
+
+  ipcMain.handle(
+    'workstation:session:upsert',
+    async (_event, record: Omit<WorkstationSessionRecord, 'productMode' | 'updatedAt'> & {
+      productMode?: 'workstation';
+      updatedAt?: number;
+    }) => {
+      try {
+        const saved = upsertWorkstationSession(record);
+        return { success: true, record: saved };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to upsert workstation session',
+        };
+      }
+    },
+  );
+
+  ipcMain.handle('workstation:session:list', async (_event, departmentId?: string) => {
+    try {
+      if (!departmentId?.trim()) {
+        return { success: true, sessions: [] as WorkstationSessionRecord[] };
+      }
+      return { success: true, sessions: listByDepartment(departmentId.trim()) };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to list workstation sessions',
+        sessions: [] as WorkstationSessionRecord[],
+      };
+    }
+  });
+
+  ipcMain.handle('workstation:session:get', async (_event, openClawSessionId: string) => {
+    try {
+      const record = getByOpenClawSessionId(openClawSessionId);
+      return { success: true, record };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get workstation session',
+        record: null,
+      };
+    }
+  });
+
+  ipcMain.handle('workstation:session:remove', async (_event, openClawSessionId: string) => {
+    try {
+      const removed = removeWorkstationSession(openClawSessionId);
+      return { success: true, removed };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to remove workstation session',
+        removed: false,
+      };
+    }
+  });
+
+  // Renderer → main HTTP proxy avoids Chromium fetch/CORS issues talking to workstation-backend.
+  ipcMain.handle(
+    'workstation:http',
+    async (
+      _event,
+      options: {
+        method?: string;
+        path: string;
+        headers?: Record<string, string>;
+        body?: string | null;
+        timeoutMs?: number;
+        /** multipart field name when bodyBase64 is set */
+        multipartField?: string;
+        multipartFileName?: string;
+        bodyBase64?: string;
+        multipartExtraFields?: Record<string, string>;
+        /** When set to base64, return binary body as bodyBase64 (xlsx downloads). */
+        responseType?: 'text' | 'base64';
+      },
+    ) => {
+      try {
+        const configured = (process.env.WORKSTATION_API_BASE_URL || '').trim().replace(/\/$/, '');
+        const isPackaged = app.isPackaged === true;
+        const base = (
+          configured ||
+          process.env.VITE_WORKSTATION_API_BASE_URL?.trim().replace(/\/$/, '') ||
+          // Dev default: production API (local backend is optional). Override via WORKSTATION_API_BASE_URL.
+          'https://api.bx-aigc.com'
+        ).replace(/\/$/, '');
+        if (isPackaged && /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(base)) {
+          return {
+            success: false,
+            status: 0,
+            ok: false,
+            error:
+              'Production build must not use localhost API. Set WORKSTATION_API_BASE_URL=https://api.bx-aigc.com',
+            body: '',
+          };
+        }
+        if (isPackaged && !base.startsWith('https://')) {
+          return {
+            success: false,
+            status: 0,
+            ok: false,
+            error: `Production API must be HTTPS. Got: ${base}`,
+            body: '',
+          };
+        }
+        const targetPath = options.path.startsWith('/') ? options.path : `/${options.path}`;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 15_000);
+
+        let body: BodyInit | undefined = options.body ?? undefined;
+        const headers: Record<string, string> = { ...(options.headers || {}) };
+        if (options.bodyBase64 && options.multipartField) {
+          const bytes = Buffer.from(options.bodyBase64, 'base64');
+          const form = new FormData();
+          form.append(
+            options.multipartField,
+            new Blob([bytes]),
+            options.multipartFileName || 'upload.bin',
+          );
+          if (options.multipartExtraFields) {
+            for (const [key, value] of Object.entries(options.multipartExtraFields)) {
+              form.append(key, value);
+            }
+          }
+          body = form;
+          delete headers['Content-Type'];
+          delete headers['content-type'];
+        }
+
+        const response = await fetch(`${base}${targetPath}`, {
+          method: options.method || 'GET',
+          headers,
+          body,
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        const responseHeaders = Object.fromEntries(response.headers.entries());
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        // Errors are always returned as text/JSON so callers can read `message`.
+        const wantBase64 =
+          response.ok &&
+          (options.responseType === 'base64' ||
+            contentType.includes('application/vnd.openxmlformats') ||
+            contentType.includes('application/octet-stream') ||
+            contentType.includes('spreadsheetml'));
+
+        if (wantBase64) {
+          const buffer = Buffer.from(await response.arrayBuffer());
+          return {
+            success: true,
+            status: response.status,
+            ok: response.ok,
+            headers: responseHeaders,
+            body: '',
+            bodyBase64: buffer.toString('base64'),
+          };
+        }
+
+        const text = await response.text();
+        return {
+          success: true,
+          status: response.status,
+          ok: response.ok,
+          headers: responseHeaders,
+          body: text,
+        };
+      } catch (error) {
+        return {
+          success: false,
+          status: 0,
+          ok: false,
+          error: error instanceof Error ? error.message : 'workstation http proxy failed',
+          body: '',
         };
       }
     },
@@ -8004,6 +8387,19 @@ if (!gotTheLock) {
     }
   });
 
+  const resolveMemoryWorkspaceForAgent = (agentId?: string): string => {
+    const normalized = agentId?.trim() || AgentId.Main;
+    // Settings memory CRUD is for general Agent workspaces only.
+    if (normalized.startsWith('workstation-') || normalized.startsWith('workstation:')) {
+      return resolveAgentWorkspacePath(AgentId.Main);
+    }
+    try {
+      return resolveExistingAgentWorkspacePath(normalized);
+    } catch {
+      return resolveAgentWorkspacePath(AgentId.Main);
+    }
+  };
+
   ipcMain.handle(
     'cowork:memory:listEntries',
     async (
@@ -8014,12 +8410,11 @@ if (!gotTheLock) {
         includeDeleted?: boolean;
         limit?: number;
         offset?: number;
+        agentId?: string;
       },
     ) => {
       try {
-        const filePath = resolveMemoryFilePath(
-          getMainAgentWorkspacePath(getOpenClawEngineManager().getStateDir()),
-        );
+        const filePath = resolveMemoryFilePath(resolveMemoryWorkspaceForAgent(input?.agentId));
 
         // Lazy migration: SQLite → MEMORY.md (one-time, cached in memory)
         if (!memoryMigrationDone) {
@@ -8059,12 +8454,11 @@ if (!gotTheLock) {
         text: string;
         confidence?: number;
         isExplicit?: boolean;
+        agentId?: string;
       },
     ) => {
       try {
-        const filePath = resolveMemoryFilePath(
-          getMainAgentWorkspacePath(getOpenClawEngineManager().getStateDir()),
-        );
+        const filePath = resolveMemoryFilePath(resolveMemoryWorkspaceForAgent(input?.agentId));
         const entry = addMemoryEntry(filePath, input.text);
         return { success: true, entry };
       } catch (error) {
@@ -8085,12 +8479,11 @@ if (!gotTheLock) {
         confidence?: number;
         status?: 'created' | 'stale' | 'deleted';
         isExplicit?: boolean;
+        agentId?: string;
       },
     ) => {
       try {
-        const filePath = resolveMemoryFilePath(
-          getMainAgentWorkspacePath(getOpenClawEngineManager().getStateDir()),
-        );
+        const filePath = resolveMemoryFilePath(resolveMemoryWorkspaceForAgent(input?.agentId));
         if (!input.text) {
           return { success: false, error: 'Memory text is required' };
         }
@@ -8113,12 +8506,11 @@ if (!gotTheLock) {
       _event,
       input: {
         id: string;
+        agentId?: string;
       },
     ) => {
       try {
-        const filePath = resolveMemoryFilePath(
-          getMainAgentWorkspacePath(getOpenClawEngineManager().getStateDir()),
-        );
+        const filePath = resolveMemoryFilePath(resolveMemoryWorkspaceForAgent(input?.agentId));
         const success = deleteMemoryEntry(filePath, input.id);
         return success ? { success: true } : { success: false, error: 'Memory entry not found' };
       } catch (error) {
@@ -8129,11 +8521,9 @@ if (!gotTheLock) {
       }
     },
   );
-  ipcMain.handle(CoworkIpcChannel.MemoryReadRaw, async () => {
+  ipcMain.handle(CoworkIpcChannel.MemoryReadRaw, async (_event, input?: { agentId?: string }) => {
     try {
-      const filePath = resolveMemoryFilePath(
-        getMainAgentWorkspacePath(getOpenClawEngineManager().getStateDir()),
-      );
+      const filePath = resolveMemoryFilePath(resolveMemoryWorkspaceForAgent(input?.agentId));
       return { success: true, content: readMemoryFileRaw(filePath) };
     } catch (error) {
       return {
@@ -8142,14 +8532,12 @@ if (!gotTheLock) {
       };
     }
   });
-  ipcMain.handle(CoworkIpcChannel.MemoryWriteRaw, async (_event, input: { content: string }) => {
+  ipcMain.handle(CoworkIpcChannel.MemoryWriteRaw, async (_event, input: { content: string; agentId?: string }) => {
     try {
       if (typeof input?.content !== 'string') {
         return { success: false, error: 'Memory content is required' };
       }
-      const filePath = resolveMemoryFilePath(
-        getMainAgentWorkspacePath(getOpenClawEngineManager().getStateDir()),
-      );
+      const filePath = resolveMemoryFilePath(resolveMemoryWorkspaceForAgent(input?.agentId));
       writeMemoryFileRaw(filePath, input.content);
       return { success: true };
     } catch (error) {
@@ -8159,11 +8547,9 @@ if (!gotTheLock) {
       };
     }
   });
-  ipcMain.handle('cowork:memory:getStats', async () => {
+  ipcMain.handle('cowork:memory:getStats', async (_event, input?: { agentId?: string }) => {
     try {
-      const filePath = resolveMemoryFilePath(
-        getMainAgentWorkspacePath(getOpenClawEngineManager().getStateDir()),
-      );
+      const filePath = resolveMemoryFilePath(resolveMemoryWorkspaceForAgent(input?.agentId));
       const entries = readMemoryEntries(filePath);
       return {
         success: true,
@@ -10202,6 +10588,14 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle(ClipboardIpc.ReadText, async () => {
+    try {
+      return { success: true, text: clipboard.readText() };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
   ipcMain.handle(ClipboardIpc.WriteImageFromFile, async (_event, filePath: string) => {
     try {
       const image = nativeImage.createFromPath(filePath);
@@ -10802,8 +11196,10 @@ if (!gotTheLock) {
       }
     }
 
-    // 禁用窗口菜单
-    mainWindow.setMenu(null);
+    // Keep Edit accelerators (Ctrl/Cmd+C/V/X/A) while hiding the menu bar.
+    // Do not call setMenu(null) — that removes clipboard shortcuts on Windows.
+    installHiddenEditMenu(mainWindow);
+    installEditableContextMenu(mainWindow.webContents);
 
     // 处理 window.open 请求（企微 SDK 授权弹窗等）
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -11310,7 +11706,7 @@ if (!gotTheLock) {
     // We don't trigger permission dialogs at startup to avoid annoying users
 
     // Ensure default working directory exists
-    const defaultProjectDir = path.join(os.homedir(), 'lobsterai', 'project');
+    const defaultProjectDir = path.join(os.homedir(), 'workhorseai', 'project');
     if (!fs.existsSync(defaultProjectDir)) {
       fs.mkdirSync(defaultProjectDir, { recursive: true });
       console.log('Created default project directory:', defaultProjectDir);
@@ -11612,6 +12008,24 @@ if (!gotTheLock) {
       );
     } catch (err) {
       console.warn('[OpenClaw] main agent workspace migration failed (non-fatal):', err);
+    }
+
+    // One-shot: reassign legacy [WS:] / workstation-cwd sessions off agent_id=main.
+    try {
+      const workstationRoot = path.join(app.getPath('userData'), 'workstation');
+      const migratedWs = migrateWorkstationSessionsOffMain({
+        store: getCoworkStore(),
+        workstationRoot,
+        createAgent: (request) => getAgentManager().createAgent(request, resolveDefaultAgentModelRef()),
+      });
+      if (migratedWs > 0) {
+        console.log(`[Main] migrated ${migratedWs} workstation session(s) off main agent`);
+        syncOpenClawConfig({ reason: 'workstation-agent-migration' }).catch((err) => {
+          console.warn('[OpenClaw] config sync after workstation migration failed:', err);
+        });
+      }
+    } catch (err) {
+      console.warn('[Main] workstation session agent migration failed (non-fatal):', err);
     }
 
     profiler.mark('syncOpenClawConfig');

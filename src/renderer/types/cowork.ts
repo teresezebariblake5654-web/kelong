@@ -255,6 +255,9 @@ export interface OpenClawEngineStatus {
   gatewayPort?: number | null;
   gatewayHttpUrl?: string | null;
   canRetry: boolean;
+  /** Recent crash reason for UI / diagnostics (never includes secrets). */
+  lastExitReason?: string;
+  recentRestartCount?: number;
 }
 
 export interface OpenClawGatewayRepairResult {

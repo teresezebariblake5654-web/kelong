@@ -31,4 +31,6 @@ export interface OpenClawSessionPatch {
   elevatedLevel?: string | null;
   responseUsage?: OpenClawSessionResponseUsage | null;
   sendPolicy?: OpenClawSessionSendPolicy | null;
+  /** Searchable display label for sessions_list (synced from Cowork sidebar titles). */
+  label?: string | null;
 }

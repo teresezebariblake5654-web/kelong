@@ -4,7 +4,7 @@
 
 ### 1.1 问题/背景
 
-当前 LobsterAI 已支持 HTML Artifact 分享，并在近期扩展了图片和 SVG 分享。分享链路由 `lobsterai-server` 提供：
+当前 Workhorse AI 已支持 HTML Artifact 分享，并在近期扩展了图片和 SVG 分享。分享链路由 `lobsterai-server` 提供：
 
 - 客户端把待分享内容打成 zip，通过 `/api/html-shares` 上传。
 - 服务端保存 `html_shares` / `html_share_files`，把文件上传到 NOS。
@@ -566,7 +566,7 @@ html-share.moderation.document.empty-text-policy=review
 
 ## 6. 涉及文件
 
-### LobsterAI 客户端
+### Workhorse AI 客户端
 
 | 文件 | 改动 |
 | --- | --- |

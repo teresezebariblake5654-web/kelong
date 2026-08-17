@@ -4,6 +4,8 @@ export const OpenClawEngineIpc = {
   RetryInstall: 'openclaw:engine:retryInstall',
   RestartGateway: 'openclaw:engine:restartGateway',
   RepairGatewayState: 'openclaw:engine:repairGatewayState',
+  RecoverFromCrash: 'openclaw:engine:recoverFromCrash',
+  GetGatewayLogPath: 'openclaw:engine:getGatewayLogPath',
   OnProgress: 'openclaw:engine:onProgress',
 } as const;
 
@@ -38,6 +40,10 @@ export const OpenClawEngineErrorCode = {
    * from the leftover archive was not possible.
    */
   RuntimeEntryMissing: 'runtime_entry_missing',
+  /** Gateway process hit JS heap OOM / abort; auto-restart is suppressed. */
+  HeapOutOfMemory: 'heap_out_of_memory',
+  /** Too many crash restarts inside the sliding window. */
+  RestartLimitReached: 'restart_limit_reached',
 } as const;
 
 export type OpenClawEngineErrorCode =

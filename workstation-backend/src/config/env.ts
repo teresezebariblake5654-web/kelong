@@ -183,6 +183,18 @@ const envSchema = z
     FIRECRAWL_BASE_URL: z.string().optional().default(''),
     FIRECRAWL_API_KEY: z.string().optional().default(''),
     FIRECRAWL_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
+
+    /**
+     * Isolated LobsterAI job-queue Redis.
+     * Do not point this at Firecrawl's internal Redis.
+     */
+    LEAD_QUEUE_REDIS_HOST: z.string().min(1).default('127.0.0.1'),
+    LEAD_QUEUE_REDIS_PORT: z.coerce.number().int().positive().default(6379),
+    LEAD_QUEUE_REDIS_USERNAME: z.string().optional().default(''),
+    LEAD_QUEUE_REDIS_PASSWORD: z.string().optional().default(''),
+    LEAD_QUEUE_REDIS_DB: z.coerce.number().int().min(0).max(15).default(0),
+    LEAD_DISCOVERY_QUEUE_NAME: z.string().min(1).default('lead-discovery'),
+    LEAD_DISCOVERY_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(1),
   })
   .superRefine((data, ctx) => {
     if (data.COOKIE_SAME_SITE === 'none' && data.COOKIE_SECURE === false) {
@@ -543,6 +555,13 @@ export type AppEnv = {
   firecrawlBaseUrl: string;
   firecrawlApiKey: string;
   firecrawlTimeoutMs: number;
+  leadQueueRedisHost: string;
+  leadQueueRedisPort: number;
+  leadQueueRedisUsername: string;
+  leadQueueRedisPassword: string;
+  leadQueueRedisDb: number;
+  leadDiscoveryQueueName: string;
+  leadDiscoveryWorkerConcurrency: number;
 };
 
 const resolvedHost =
@@ -666,4 +685,11 @@ export const env: AppEnv = {
   firecrawlBaseUrl: raw.FIRECRAWL_BASE_URL.trim(),
   firecrawlApiKey: raw.FIRECRAWL_API_KEY.trim(),
   firecrawlTimeoutMs: raw.FIRECRAWL_TIMEOUT_MS,
+  leadQueueRedisHost: raw.LEAD_QUEUE_REDIS_HOST.trim() || '127.0.0.1',
+  leadQueueRedisPort: raw.LEAD_QUEUE_REDIS_PORT,
+  leadQueueRedisUsername: raw.LEAD_QUEUE_REDIS_USERNAME.trim(),
+  leadQueueRedisPassword: raw.LEAD_QUEUE_REDIS_PASSWORD,
+  leadQueueRedisDb: raw.LEAD_QUEUE_REDIS_DB,
+  leadDiscoveryQueueName: raw.LEAD_DISCOVERY_QUEUE_NAME.trim() || 'lead-discovery',
+  leadDiscoveryWorkerConcurrency: raw.LEAD_DISCOVERY_WORKER_CONCURRENCY,
 };

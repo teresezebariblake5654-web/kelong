@@ -1,7 +1,7 @@
 import { net } from 'electron';
 import http from 'http';
 
-import { isLobsterAIQuotaExhaustedError } from '../../common/coworkErrorClassify';
+import { isWorkhorseAIQuotaExhaustedError } from '../../common/coworkErrorClassify';
 
 const PROXY_BIND_HOST = '127.0.0.1';
 const RECENT_QUOTA_ERROR_TTL_MS = 30_000;
@@ -399,14 +399,14 @@ function extractQuotaErrorFromProxyErrorPayload(
     const code = getErrorCode(parsed);
     const isErrorPayload = event === 'error' || parsed.type === 'error' || parsed.error != null;
     const searchable = `${message} ${code ?? ''} ${payload}`;
-    if (isErrorPayload && isLobsterAIQuotaExhaustedError(searchable)) {
+    if (isErrorPayload && isWorkhorseAIQuotaExhaustedError(searchable)) {
       return {
         message: message || payload,
         ...(code !== undefined ? { code } : {}),
       };
     }
   } catch {
-    if (event === 'error' && isLobsterAIQuotaExhaustedError(payload)) {
+    if (event === 'error' && isWorkhorseAIQuotaExhaustedError(payload)) {
       return { message: payload };
     }
   }

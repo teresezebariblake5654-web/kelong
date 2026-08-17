@@ -1,0 +1,107 @@
+/* Soft pasture for agent workspace — readable, not neon. */
+
+.cowork-lawn__sky,
+.cowork-lawn__field,
+.cowork-lawn__blade,
+.cowork-lawn__haze {
+  position: absolute;
+  inset: 0;
+}
+
+.cowork-lawn--home .cowork-lawn__sky {
+  background:
+    radial-gradient(ellipse 90% 55% at 50% -10%, #d8eef8 0%, transparent 58%),
+    linear-gradient(180deg, #eaf6fb 0%, #e4f3e8 42%, transparent 70%);
+}
+
+.cowork-lawn--conversation .cowork-lawn__sky {
+  background: linear-gradient(180deg, #eef7f1 0%, transparent 46%);
+  opacity: 0.85;
+}
+
+.cowork-lawn--home .cowork-lawn__field {
+  background:
+    radial-gradient(ellipse 120% 70% at 50% 118%, #6fad5a 0%, transparent 55%),
+    linear-gradient(
+      180deg,
+      transparent 28%,
+      #cfe8c0 52%,
+      #b7d99a 72%,
+      #9ccc78 100%
+    );
+}
+
+.cowork-lawn--conversation .cowork-lawn__field {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--lobster-background, #f7f8f5) 88%, #c5e0b0) 0%,
+      color-mix(in srgb, var(--lobster-background, #f7f8f5) 72%, #b4d696) 100%
+    );
+  opacity: 0.92;
+}
+
+/* Fine grass grain — CSS only, no image asset */
+.cowork-lawn__blade {
+  opacity: 0.28;
+  background-image:
+    repeating-linear-gradient(
+      -18deg,
+      transparent 0,
+      transparent 7px,
+      rgba(56, 110, 42, 0.07) 7px,
+      rgba(56, 110, 42, 0.07) 8px
+    ),
+    repeating-linear-gradient(
+      14deg,
+      transparent 0,
+      transparent 11px,
+      rgba(90, 140, 55, 0.06) 11px,
+      rgba(90, 140, 55, 0.06) 12px
+    );
+  mask-image: linear-gradient(180deg, transparent 20%, #000 55%, #000 100%);
+}
+
+.cowork-lawn--conversation .cowork-lawn__blade {
+  opacity: 0.14;
+}
+
+.cowork-lawn--home .cowork-lawn__haze {
+  background:
+    radial-gradient(ellipse 70% 40% at 50% 42%, rgba(255, 255, 255, 0.55) 0%, transparent 70%);
+}
+
+.cowork-lawn--conversation .cowork-lawn__haze {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--lobster-background, #fff) 55%, transparent) 0%,
+      color-mix(in srgb, var(--lobster-background, #fff) 28%, transparent) 100%
+    );
+}
+
+/* Dark theme: deepen pasture so text stays readable */
+:root.dark .cowork-lawn--home .cowork-lawn__sky,
+.dark .cowork-lawn--home .cowork-lawn__sky {
+  background:
+    radial-gradient(ellipse 90% 55% at 50% -10%, #1a2e28 0%, transparent 58%),
+    linear-gradient(180deg, #15241f 0%, #1a2c22 42%, transparent 70%);
+}
+
+:root.dark .cowork-lawn--home .cowork-lawn__field,
+.dark .cowork-lawn--home .cowork-lawn__field {
+  background:
+    radial-gradient(ellipse 120% 70% at 50% 118%, #2f5a28 0%, transparent 55%),
+    linear-gradient(180deg, transparent 28%, #243d28 55%, #1f3524 100%);
+}
+
+:root.dark .cowork-lawn--conversation .cowork-lawn__field,
+.dark .cowork-lawn--conversation .cowork-lawn__field {
+  background: linear-gradient(180deg, #1a2420 0%, #1c2a22 100%);
+  opacity: 1;
+}
+
+:root.dark .cowork-lawn__blade,
+.dark .cowork-lawn__blade {
+  opacity: 0.18;
+}

@@ -1,0 +1,254 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:is([data-theme='dark'] *));
+
+/*
+  Design Tokens — 企业桌面工具
+  浅灰白背景 / 冷蓝紫强调 / 4·8 间距 / 10–14 圆角
+  禁止组件内写死颜色，统一消费这些变量。
+*/
+:root {
+  --font-sans: 'Inter', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+
+  --background: 0 0% 100%;
+  --foreground: 222 22% 16%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 22% 16%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 22% 16%;
+  --primary: 222 16% 20%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 96%;
+  --secondary-foreground: 222 16% 28%;
+  --muted: 0 0% 96%;
+  --muted-foreground: 220 9% 46%;
+  --accent: 0 0% 96%;
+  --accent-foreground: 222 16% 20%;
+  --destructive: 0 62% 48%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 152 42% 36%;
+  --success-foreground: 0 0% 100%;
+  --warning: 36 70% 42%;
+  --warning-foreground: 0 0% 100%;
+  --border: 0 0% 90%;
+  --input: 0 0% 90%;
+  --ring: 222 16% 20%;
+  --sidebar: 0 0% 97%;
+  --sidebar-foreground: 222 16% 18%;
+  --sidebar-muted: 220 9% 46%;
+  --sidebar-accent: 0 0% 92%;
+  --sidebar-border: 0 0% 90%;
+  --radius: 0.75rem;
+
+  /* 兼容旧 aw-* 类名，过渡期仍可用 */
+  --aw-font: var(--font-sans);
+  --aw-font-mono: var(--font-mono);
+  --aw-fs-xs: 12px;
+  --aw-fs-sm: 13px;
+  --aw-fs-md: 14px;
+  --aw-fs-lg: 18px;
+  --aw-fs-xl: 24px;
+  --aw-space-2: 8px;
+  --aw-space-3: 12px;
+  --aw-space-4: 16px;
+  --aw-space-5: 20px;
+  --aw-space-6: 24px;
+  --aw-radius-sm: 8px;
+  --aw-radius-md: 10px;
+  --aw-radius-lg: 14px;
+  --aw-sidebar-width: 240px;
+  --aw-sidebar-collapsed: 64px;
+  --aw-topbar-height: 52px;
+  --aw-footer-height: 48px;
+  --aw-primary: hsl(var(--primary));
+  --aw-primary-hover: hsl(243 58% 44%);
+  --aw-primary-soft: hsl(var(--accent));
+  --aw-accent: hsl(var(--primary));
+  --aw-bg: hsl(var(--background));
+  --aw-bg-elevated: hsl(var(--card));
+  --aw-bg-subtle: hsl(var(--muted));
+  --aw-bg-muted: hsl(var(--muted));
+  --aw-bg-card: hsl(var(--card));
+  --aw-bg-input: hsl(var(--card));
+  --aw-bg-topbar: hsl(var(--card));
+  --aw-bg-table-head: hsl(var(--muted));
+  --aw-bg-sidebar: hsl(var(--sidebar));
+  --aw-bg-sidebar-hover: hsl(var(--sidebar-accent));
+  --aw-text: hsl(var(--foreground));
+  --aw-text-secondary: hsl(var(--muted-foreground));
+  --aw-text-muted: hsl(220 10% 58%);
+  --aw-text-inverse: hsl(var(--sidebar-foreground));
+  --aw-sidebar-text: hsl(var(--sidebar-foreground));
+  --aw-sidebar-text-muted: hsl(var(--sidebar-muted));
+  --aw-border: hsl(var(--border));
+  --aw-border-strong: hsl(220 12% 84%);
+  --aw-success: hsl(var(--success));
+  --aw-success-soft: hsl(152 40% 94%);
+  --aw-success-border: hsl(152 30% 80%);
+  --aw-warning: hsl(var(--warning));
+  --aw-warning-soft: hsl(36 60% 94%);
+  --aw-warning-border: hsl(36 40% 80%);
+  --aw-danger: hsl(var(--destructive));
+  --aw-danger-soft: hsl(0 60% 96%);
+  --aw-danger-border: hsl(0 40% 84%);
+  --aw-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+
+  /* Department accents — components use data-dept / accentToken, never random colors */
+  --dept-hr: 243 40% 52%;
+  --dept-marketing: 280 35% 48%;
+  --dept-sales: 200 45% 42%;
+  --dept-operations: 170 40% 38%;
+  --dept-administration: 220 20% 45%;
+  --dept-procurement: 25 45% 45%;
+  --dept-production: 145 35% 38%;
+  --dept-logistics: 210 40% 44%;
+  --dept-finance: 40 50% 42%;
+  --dept-ecommerce: 330 55% 48%;
+  --dept-customer-service: 330 35% 48%;
+}
+
+[data-theme='dark'] {
+  --background: 222 22% 8%;
+  --foreground: 220 14% 94%;
+  --card: 222 20% 11%;
+  --card-foreground: 220 14% 94%;
+  --popover: 222 20% 11%;
+  --popover-foreground: 220 14% 94%;
+  --primary: 243 62% 64%;
+  --primary-foreground: 222 30% 8%;
+  --secondary: 222 16% 16%;
+  --secondary-foreground: 220 14% 90%;
+  --muted: 222 16% 16%;
+  --muted-foreground: 220 10% 62%;
+  --accent: 243 30% 18%;
+  --accent-foreground: 243 70% 82%;
+  --destructive: 0 55% 52%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 152 40% 48%;
+  --success-foreground: 0 0% 100%;
+  --warning: 36 70% 52%;
+  --warning-foreground: 0 0% 100%;
+  --border: 222 14% 18%;
+  --input: 222 14% 18%;
+  --ring: 243 62% 64%;
+  --sidebar: 222 24% 7%;
+  --sidebar-foreground: 220 14% 88%;
+  --sidebar-muted: 220 10% 55%;
+  --sidebar-accent: 222 18% 12%;
+  --sidebar-border: 222 14% 14%;
+
+  --aw-primary-hover: hsl(243 62% 58%);
+  --aw-success-soft: hsl(152 30% 14%);
+  --aw-success-border: hsl(152 25% 24%);
+  --aw-warning-soft: hsl(36 30% 14%);
+  --aw-warning-border: hsl(36 25% 24%);
+  --aw-danger-soft: hsl(0 30% 14%);
+  --aw-danger-border: hsl(0 25% 24%);
+  --aw-text-muted: hsl(220 10% 48%);
+  --aw-border-strong: hsl(222 12% 26%);
+  --aw-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-success: hsl(var(--success));
+  --color-warning: hsl(var(--warning));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-muted: hsl(var(--sidebar-muted));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    margin: 0;
+    height: 100%;
+    max-height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-size: 14px;
+    line-height: 1.5;
+    min-width: 1280px;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  :focus-visible {
+    @apply outline-none;
+  }
+}
+
+/* Soft department accent helpers (no inline styles) */
+.dept-accent-bar {
+  border-left-width: 3px;
+  border-left-style: solid;
+  border-left-color: hsl(var(--dept-accent, var(--primary)));
+}
+
+.dept-accent-icon {
+  background: hsl(var(--dept-accent, var(--primary)) / 0.12);
+  color: hsl(var(--dept-accent, var(--primary)));
+}
+
+.dept-accent-dot {
+  background: hsl(var(--dept-accent, var(--primary)));
+}
+
+[data-dept='hr'] { --dept-accent: var(--dept-hr); }
+[data-dept='marketing'] { --dept-accent: var(--dept-marketing); }
+[data-dept='sales'] { --dept-accent: var(--dept-sales); }
+[data-dept='operations'] { --dept-accent: var(--dept-operations); }
+[data-dept='administration'] { --dept-accent: var(--dept-administration); }
+[data-dept='procurement'] { --dept-accent: var(--dept-procurement); }
+[data-dept='production'] { --dept-accent: var(--dept-production); }
+[data-dept='logistics'] { --dept-accent: var(--dept-logistics); }
+[data-dept='finance'] { --dept-accent: var(--dept-finance); }
+[data-dept='customer-service'] { --dept-accent: var(--dept-customer-service); }

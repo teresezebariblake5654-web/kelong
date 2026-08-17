@@ -615,7 +615,7 @@ export class PluginManager {
 
   /**
    * Sync plugins from OpenClaw's extensions directories and config into the
-   * local SQLite store. Discovers plugins installed outside of LobsterAI
+   * local SQLite store. Discovers plugins installed outside of Workhorse AI
    * (via AI conversation, CLI, or OpenClaw Web UI) and adds them so they
    * appear in the plugin management UI.
    */

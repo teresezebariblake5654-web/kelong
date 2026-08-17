@@ -56,6 +56,16 @@ export const LegacyAgentName = {
   Main: 'main',
 } as const;
 
+/** Historical default display names that should still resolve as the main agent profile. */
+export const LegacyDefaultAgentNames = [
+  'LobsterAI',
+  'lobsterai',
+  'Workhorse AI',
+  'workhorse ai',
+  '火星 AI',
+  '火星 ai',
+] as const;
+
 export const DefaultAgentProfile = {
-  Name: 'LobsterAI',
+  Name: 'openclow',
 } as const;

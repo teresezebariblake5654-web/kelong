@@ -73,7 +73,16 @@ function pdfJsStaticAssetsPlugin(): Plugin {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ command }) => {
+  // `vite` / `electron:dev` = serve; `vite build` / packaging = build.
+  // Dev OOM was driven by repeatedly bundling ~10MB electron main + maps.
+  const isServe = command === 'serve';
+  // Keep renderer maps in prod builds; skip heavy maps while the long-lived
+  // Vite watcher is running so Node heap stays under the default ~4GB limit.
+  const electronSourcemap = isServe ? false : true;
+  const rendererSourcemap = isServe ? false : true;
+
+  return {
   define: {
     // KaTeX ESM bundle references this compile-time constant.
     __VERSION__: JSON.stringify(katexVersion),
@@ -87,9 +96,11 @@ export default defineConfig({
         entry: 'src/main/main.ts',
         vite: {
           build: {
-            sourcemap: true,
+            sourcemap: electronSourcemap,
             outDir: 'dist-electron',
             minify: false,
+            // Avoid gzip-size reporting on every main-process rebuild (saves CPU + peak RAM).
+            reportCompressedSize: false,
             rollupOptions: {
               external: (id) => {
                 const staticExternals = ['better-sqlite3', 'discord.js', 'zlib-sync', '@discordjs/opus', 'bufferutil', 'utf-8-validate', 'node-nim', 'nim-web-sdk-ng'];
@@ -114,9 +125,10 @@ export default defineConfig({
         entry: 'src/main/preload.ts',
         vite: {
           build: {
-            sourcemap: true,
+            sourcemap: electronSourcemap,
             outDir: 'dist-electron',
             minify: false,
+            reportCompressedSize: false,
           },
         },
         onstart() {},
@@ -126,9 +138,10 @@ export default defineConfig({
         entry: 'src/main/browserAnnotationPreload.ts',
         vite: {
           build: {
-            sourcemap: true,
+            sourcemap: electronSourcemap,
             outDir: 'dist-electron',
             minify: false,
+            reportCompressedSize: false,
           },
         },
         onstart() {},
@@ -141,13 +154,35 @@ export default defineConfig({
     alias: {
       '@shared': path.resolve(__dirname, './src/shared'),
       '@': path.resolve(__dirname, './src/renderer'),
+      '@workstation': path.resolve(__dirname, './src/renderer/workstation'),
+      '@aw/shared': path.resolve(__dirname, './workstation-packages/shared/src'),
+      '@aw/task-templates': path.resolve(__dirname, './workstation-packages/task-templates/src'),
+      '@aw/task-workflows': path.resolve(__dirname, './workstation-packages/task-workflows/src'),
+      '@aw/data-engine': path.resolve(__dirname, './workstation-packages/data-engine/src'),
+      // Browser shims for Node builtins pulled in by workstation packages
+      crypto: path.resolve(__dirname, './src/renderer/workstation/shims/node-crypto.ts'),
+      'node:crypto': path.resolve(__dirname, './src/renderer/workstation/shims/node-crypto.ts'),
+      fs: path.resolve(__dirname, './src/renderer/workstation/shims/node-fs.ts'),
+      'node:fs': path.resolve(__dirname, './src/renderer/workstation/shims/node-fs.ts'),
+      path: path.resolve(__dirname, './src/renderer/workstation/shims/node-path.ts'),
+      'node:path': path.resolve(__dirname, './src/renderer/workstation/shims/node-path.ts'),
+      '@tauri-apps/api': path.resolve(__dirname, './src/renderer/workstation/shims/tauri-stub.ts'),
+      '@tauri-apps/api/core': path.resolve(__dirname, './src/renderer/workstation/shims/tauri-stub.ts'),
+      '@tauri-apps/plugin-dialog': path.resolve(__dirname, './src/renderer/workstation/shims/tauri-stub.ts'),
+      '@tauri-apps/plugin-fs': path.resolve(__dirname, './src/renderer/workstation/shims/tauri-stub.ts'),
+      '@tauri-apps/plugin-shell': path.resolve(__dirname, './src/renderer/workstation/shims/tauri-stub.ts'),
+      '@tauri-apps/plugin-http': path.resolve(__dirname, './src/renderer/workstation/shims/tauri-stub.ts'),
+      '@tauri-apps/plugin-os': path.resolve(__dirname, './src/renderer/workstation/shims/tauri-stub.ts'),
+      '@tauri-apps/plugin-process': path.resolve(__dirname, './src/renderer/workstation/shims/tauri-stub.ts'),
+      '@tauri-apps/plugin-updater': path.resolve(__dirname, './src/renderer/workstation/shims/tauri-stub.ts'),
     },
   },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    sourcemap: true,
+    sourcemap: rendererSourcemap,
     minify: false,
+    reportCompressedSize: false,
   },
   server: {
     port: devPort,
@@ -158,9 +193,18 @@ export default defineConfig({
     },
     watch: {
       usePolling: false,
-      // Ignore vendor/ to prevent dev reload when plugins are installed into
-      // vendor/openclaw-runtime/.../third-party-extensions/
-      ignored: ['**/vendor/**'],
+      // Ignore heavy / generated trees so packaging + electron output cannot
+      // thrash the watcher or lock files (previous EBUSY / OOM triggers).
+      ignored: [
+        '**/vendor/**',
+        '**/release/**',
+        '**/build-tar/**',
+        '**/dist/**',
+        '**/dist-electron/**',
+        '**/logs/**',
+        '**/*.tgz',
+        '**/upload.tar',
+      ],
     },
   },
   optimizeDeps: {
@@ -169,7 +213,12 @@ export default defineConfig({
       define: {
         __VERSION__: JSON.stringify(katexVersion),
       },
+      alias: {
+        crypto: path.resolve(__dirname, './src/renderer/workstation/shims/node-crypto.ts'),
+        'node:crypto': path.resolve(__dirname, './src/renderer/workstation/shims/node-crypto.ts'),
+      },
     },
   },
   clearScreen: false,
+  };
 });

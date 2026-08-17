@@ -35,6 +35,7 @@ import {
 import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { applyOptimisticGoalCommand } from '../../utils/goalCommand';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
+import { isYoudaoCloudEnabled } from '../../../shared/featureFlags';
 import CreditsResetCampaignFloat from '../CreditsResetCampaignFloat';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
@@ -69,6 +70,7 @@ export interface CoworkViewProps {
   onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
   onShowSkills?: () => void;
   onShowKits?: () => void;
+  onShowWorkstation?: () => void;
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
   onNewChat?: () => void;
@@ -82,6 +84,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   onRequestAppSettings,
   onShowSkills,
   onShowKits,
+  onShowWorkstation,
   isSidebarCollapsed,
   onToggleSidebar,
   onNewChat,
@@ -808,6 +811,18 @@ const CoworkView: React.FC<CoworkViewProps> = ({
       />
       <SkinAmbientEffects visible={!shouldPresentConversation} />
 
+      {onShowWorkstation ? (
+        <div className="absolute right-4 top-3 z-40">
+          <button
+            type="button"
+            onClick={onShowWorkstation}
+            className="rounded-lg border border-border bg-surface/90 px-3 py-1.5 text-xs font-medium text-foreground shadow-sm backdrop-blur transition-colors hover:bg-surface-raised"
+          >
+            返回AI员工助手
+          </button>
+        </div>
+      ) : null}
+
       {currentSession ? (
         <div className="relative z-10 flex-1 flex flex-col h-full">
           {engineStatusBanner}
@@ -904,7 +919,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
                     />
                   </div>
                 )}
-                <CreditsResetCampaignFloat />
+                {isYoudaoCloudEnabled() && <CreditsResetCampaignFloat />}
               </div>
 
               <div aria-hidden="true" className="w-full min-h-[24px] flex-[3_0_0px]" />

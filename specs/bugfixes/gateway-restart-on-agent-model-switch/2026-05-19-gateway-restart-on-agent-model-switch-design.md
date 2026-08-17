@@ -4,7 +4,7 @@
 
 ### 1.1 问题
 
-用户只是在 Cowork 输入框里切换了一下模型，OpenClaw gateway 就被 LobsterAI 主进程主动重启。
+用户只是在 Cowork 输入框里切换了一下模型，OpenClaw gateway 就被 Workhorse AI 主进程主动重启。
 
 日志中的关键时间线：
 

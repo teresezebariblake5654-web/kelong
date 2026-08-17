@@ -7,6 +7,7 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
 
+import { buildPublicIdentityPolicyPrompt } from '../../common/publicIdentityPrompt';
 import { buildScheduledTaskEnginePrompt } from '../../scheduledTask/enginePrompt';
 import type { CoworkMessage,CoworkStore } from '../coworkStore';
 import { t } from '../i18n';
@@ -420,6 +421,9 @@ export class IMCoworkHandler extends EventEmitter {
     if (mediaInstruction) {
       sections.push(mediaInstruction);
     }
+
+    // Final override: public product identity / anti-leak.
+    sections.push(buildPublicIdentityPolicyPrompt());
 
     return sections.join('\n\n');
   }

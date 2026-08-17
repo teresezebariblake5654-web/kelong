@@ -14,6 +14,7 @@ import { useDispatch } from 'react-redux';
 import { i18nService } from '../../services/i18n';
 import { kitService } from '../../services/kit';
 import { compareVersions, resolveLocalizedText } from '../../services/skill';
+import { isYoudaoCloudEnabled } from '../../../shared/featureFlags';
 import { setInstalledKits as setInstalledKitsAction, setMarketplaceKits } from '../../store/slices/kitSlice';
 import type { InstalledKit, KitSkillRef, MarketplaceKit } from '../../types/kit';
 import Modal from '../common/Modal';
@@ -167,7 +168,9 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
   const [installedKits, setInstalledKits] = useState<Record<string, InstalledKit>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<KitTab>(KitTab.Marketplace);
+  const [activeTab, setActiveTab] = useState<KitTab>(
+    isYoudaoCloudEnabled() ? KitTab.Marketplace : KitTab.Installed,
+  );
   const [selectedKit, setSelectedKit] = useState<MarketplaceKit | null>(null);
   const [operatingKitId, setOperatingKitId] = useState<string | null>(null);
   const [operationType, setOperationType] = useState<KitOperationType | null>(null);
@@ -177,10 +180,10 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
-    const [marketKits, installed] = await Promise.all([
-      kitService.fetchMarketplaceKits(),
-      kitService.getInstalledKits(),
-    ]);
+    const installed = await kitService.getInstalledKits();
+    const marketKits = isYoudaoCloudEnabled()
+      ? await kitService.fetchMarketplaceKits()
+      : [];
     setKits(marketKits);
     setInstalledKits(installed);
     dispatch(setMarketplaceKits(marketKits));
@@ -730,6 +733,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
 
         {/* Marketplace / Installed tabs */}
         <div className="flex items-center border-b border-border">
+          {isYoudaoCloudEnabled() && (
           <button
             type="button"
             onClick={() => handleTabChange(KitTab.Marketplace)}
@@ -742,6 +746,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
               activeTab === KitTab.Marketplace ? 'bg-primary' : 'bg-transparent'
             }`} />
           </button>
+          )}
           <button
             type="button"
             onClick={() => handleTabChange(KitTab.Installed)}
@@ -802,7 +807,7 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking, onUseKit }) => {
             >
               {i18nService.t('kitClearSearch')}
             </button>
-          ) : activeTab === KitTab.Installed ? (
+          ) : activeTab === KitTab.Installed && isYoudaoCloudEnabled() ? (
             <button
               type="button"
               onClick={() => handleTabChange(KitTab.Marketplace)}

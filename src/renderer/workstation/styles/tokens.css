@@ -1,0 +1,108 @@
+/* Scoped under .workstation-root — prefer workstation-scoped.css for full tokens. */
+.workstation-root {
+  --aw-font: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --aw-font-mono: 'Cascadia Mono', 'Consolas', monospace;
+
+  /* 火星 AI Midnight brand tokens (available to all workstation pages) */
+  --swift-bg: #070b1f;
+  --swift-bg-secondary: #0b1230;
+  --swift-surface: rgba(18, 25, 55, 0.58);
+  --swift-surface-hover: rgba(28, 38, 78, 0.72);
+  --swift-border: rgba(255, 255, 255, 0.12);
+  --swift-text: #ffffff;
+  --swift-text-secondary: rgba(255, 255, 255, 0.68);
+  --swift-gold: #ffd84d;
+  --swift-gold-light: #ffe98a;
+  --swift-gold-glow: rgba(255, 216, 77, 0.28);
+  --swift-purple: #7770c8;
+
+  --brand-midnight: #070b1f;
+  --brand-navy: #0b1230;
+  --brand-blue: #111a42;
+  --brand-blue-light: #18245a;
+  --brand-gold: #ffd84d;
+  --brand-gold-light: #ffe98a;
+  --brand-gold-glow: rgba(255, 216, 77, 0.28);
+  --brand-purple: #7770c8;
+  --glass-bg: rgba(18, 25, 55, 0.58);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --gold-border: rgba(255, 216, 77, 0.42);
+
+  --aw-fs-xs: 12px;
+  --aw-fs-sm: 13px;
+  --aw-fs-md: 14px;
+  --aw-fs-lg: 18px;
+  --aw-fs-xl: 24px;
+
+  --aw-space-2: 8px;
+  --aw-space-3: 12px;
+  --aw-space-4: 16px;
+  --aw-space-5: 20px;
+  --aw-space-6: 24px;
+
+  --aw-radius-sm: 6px;
+  --aw-radius-md: 10px;
+  --aw-radius-lg: 14px;
+
+  --aw-sidebar-width: 240px;
+  --aw-topbar-height: 56px;
+  --aw-footer-height: 52px;
+
+  --aw-primary: #2563eb;
+  --aw-primary-hover: #1d4ed8;
+  --aw-primary-soft: #eff6ff;
+  --aw-accent: #7c3aed;
+
+  --aw-bg: #f3f4f6;
+  --aw-bg-elevated: #ffffff;
+  --aw-bg-subtle: #f9fafb;
+  --aw-bg-muted: #f3f4f6;
+  --aw-bg-card: #ffffff;
+  --aw-bg-input: #ffffff;
+  --aw-bg-topbar: #ffffff;
+  --aw-bg-table-head: #f9fafb;
+  --aw-bg-sidebar: #111827;
+  --aw-bg-sidebar-hover: rgba(255, 255, 255, 0.08);
+
+  --aw-text: #111827;
+  --aw-text-secondary: #6b7280;
+  --aw-text-muted: #9ca3af;
+  --aw-text-inverse: #f9fafb;
+  --aw-sidebar-text: #e5e7eb;
+  --aw-sidebar-text-muted: #9ca3af;
+
+  --aw-border: #e5e7eb;
+  --aw-border-strong: #d1d5db;
+
+  --aw-success: #059669;
+  --aw-success-soft: #ecfdf5;
+  --aw-success-border: #a7f3d0;
+
+  --aw-warning: #d97706;
+  --aw-warning-soft: #fffbeb;
+  --aw-warning-border: #fde68a;
+
+  --aw-danger: #dc2626;
+  --aw-danger-soft: #fef2f2;
+  --aw-danger-border: #fecaca;
+
+  --aw-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.workstation-root[data-theme='dark'],
+html[data-theme='dark'] .workstation-root {
+  --aw-bg: #0f172a;
+  --aw-bg-elevated: #1e293b;
+  --aw-bg-subtle: #1e293b;
+  --aw-bg-muted: #334155;
+  --aw-bg-card: #1e293b;
+  --aw-bg-input: #0f172a;
+  --aw-bg-topbar: #1e293b;
+  --aw-bg-table-head: #334155;
+  --aw-text: #f1f5f9;
+  --aw-text-secondary: #94a3b8;
+  --aw-text-muted: #64748b;
+  --aw-border: #334155;
+  --aw-border-strong: #475569;
+  --aw-primary-soft: rgba(37, 99, 235, 0.15);
+}

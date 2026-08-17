@@ -19,7 +19,26 @@
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["src/shared/*"],
-      "@/*": ["src/renderer/*"]
+      "@/*": ["src/renderer/*"],
+      "@workstation/*": ["src/renderer/workstation/*"],
+      "@workstation": ["src/renderer/workstation"],
+      "@aw/shared": ["workstation-packages/shared/src"],
+      "@aw/shared/*": ["workstation-packages/shared/src/*"],
+      "@aw/task-templates": ["workstation-packages/task-templates/src"],
+      "@aw/task-templates/*": ["workstation-packages/task-templates/src/*"],
+      "@aw/task-workflows": ["workstation-packages/task-workflows/src"],
+      "@aw/task-workflows/*": ["workstation-packages/task-workflows/src/*"],
+      "@aw/data-engine": ["workstation-packages/data-engine/src"],
+      "@aw/data-engine/*": ["workstation-packages/data-engine/src/*"],
+      "@tauri-apps/api": ["src/renderer/workstation/shims/tauri-stub.ts"],
+      "@tauri-apps/api/*": ["src/renderer/workstation/shims/tauri-stub.ts"],
+      "@tauri-apps/plugin-dialog": ["src/renderer/workstation/shims/tauri-stub.ts"],
+      "@tauri-apps/plugin-fs": ["src/renderer/workstation/shims/tauri-stub.ts"],
+      "@tauri-apps/plugin-shell": ["src/renderer/workstation/shims/tauri-stub.ts"],
+      "@tauri-apps/plugin-http": ["src/renderer/workstation/shims/tauri-stub.ts"],
+      "@tauri-apps/plugin-os": ["src/renderer/workstation/shims/tauri-stub.ts"],
+      "@tauri-apps/plugin-process": ["src/renderer/workstation/shims/tauri-stub.ts"],
+      "@tauri-apps/plugin-updater": ["src/renderer/workstation/shims/tauri-stub.ts"]
     }
   },
   "include": ["src/renderer", "src/common", "src/shared"],

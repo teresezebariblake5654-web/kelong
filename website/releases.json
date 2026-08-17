@@ -1,0 +1,24 @@
+{
+  "version": "2026.7.23",
+  "updatedAt": "2026-08-04",
+  "windows": {
+    "label": "Windows",
+    "url": "./downloads/WorkhorseAI-Windows-Setup.exe",
+    "file": "WorkhorseAI-Windows-Setup.exe",
+    "available": true,
+    "source": "Workhorse AI-Setup-x64-2026.7.23-official.exe",
+    "sizeBytes": 297290440
+  },
+  "macArm64": {
+    "label": "macOS Apple Silicon",
+    "url": "./downloads/WorkhorseAI-macOS-arm64.dmg",
+    "file": "WorkhorseAI-macOS-arm64.dmg",
+    "available": false
+  },
+  "macX64": {
+    "label": "macOS Intel",
+    "url": "./downloads/WorkhorseAI-macOS-x64.dmg",
+    "file": "WorkhorseAI-macOS-x64.dmg",
+    "available": false
+  }
+}

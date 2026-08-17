@@ -268,6 +268,9 @@ describe('OpenClawConfigSync runtime config output', () => {
       },
     });
     expect(config.agents.defaults.memorySearch.remote).toBeUndefined();
+    expect(config.agents.defaults.memorySearch.experimental).toBeUndefined();
+    expect(config.agents.defaults.memorySearch.sources).toBeUndefined();
+    expect(config.tools.sessions?.visibility).toBeUndefined();
   });
 
   test('configures OpenClaw chat image attachment limit to 30MB', async () => {
@@ -2252,7 +2255,7 @@ describe('OpenClawConfigSync runtime config output', () => {
 
     const agentsMdPath = path.join(stateDir, 'workspace-main', 'AGENTS.md');
     const agentsMd = fs.readFileSync(agentsMdPath, 'utf8');
-    expect(agentsMd).toContain('LobsterAI does not support sandbox browser execution in this version.');
+    expect(agentsMd).toContain('Workhorse AI does not support sandbox browser execution in this version.');
     expect(agentsMd).toContain('For every `browser` tool call, set `target="host"` explicitly.');
   });
 

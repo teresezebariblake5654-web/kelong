@@ -23,6 +23,8 @@ import type {
   AgentSidebarPreferenceState,
   AgentSidebarTaskNode,
 } from './types';
+import { isWorkstationAgentId } from '../../workstation/services/lobsterChatBridge';
+import { isWorkstationCoworkSession } from '../../../shared/workstation/session';
 
 const normalizeAgentId = (agentId?: string) => agentId?.trim() || 'main';
 
@@ -182,7 +184,7 @@ export const useAgentSidebarState = () => {
 
   const enabledAgents = useMemo(() => {
     return agents
-      .filter((agent) => agent.enabled)
+      .filter((agent) => agent.enabled && !isWorkstationAgentId(agent.id))
       .map((agent) => ({
         id: agent.id,
         name: agent.name,
@@ -387,6 +389,9 @@ export const useAgentSidebarState = () => {
       const next = { ...previous };
 
       sessions.forEach((session) => {
+        if (isWorkstationCoworkSession(session) || isWorkstationAgentId(session.agentId)) {
+          return;
+        }
         const agentId = normalizeAgentId(session.agentId);
         const existingTasks = next[agentId];
         if (!existingTasks) return;

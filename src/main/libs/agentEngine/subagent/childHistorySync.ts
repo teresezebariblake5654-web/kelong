@@ -1,6 +1,10 @@
+import { normalizeWorkhorseVisibleUserText } from '../../../../common/workhorseOutboundPrompt';
 import type { CoworkMessage } from '../../../coworkStore';
 import { shouldSuppressHeartbeatText } from '../../openclawHistory';
 import { parseSubagentGatewayHistoryMessages } from './historyParser';
+
+/** @deprecated Prefer normalizeWorkhorseVisibleUserText from common/workhorseOutboundPrompt */
+export const normalizeSubagentVisibleUserText = normalizeWorkhorseVisibleUserText;
 
 export type SubagentChildHistorySyncPlan = {
   changed: boolean;
@@ -114,27 +118,6 @@ const toStoredEntry = (message: CoworkMessage): SubagentChildHistoryEntry | null
     timestamp: message.timestamp,
     metadata: normalizeMetadata(message.metadata),
   };
-};
-
-export const normalizeSubagentVisibleUserText = (text: string): string => {
-  const currentRequestMarker = '[Current user request]';
-  const currentRequestIndex = text.lastIndexOf(currentRequestMarker);
-  if (currentRequestIndex >= 0) {
-    const visible = text.slice(currentRequestIndex + currentRequestMarker.length).trim();
-    if (visible) return visible;
-  }
-
-  const taskMarker = '[Subagent Task]';
-  const taskIndex = text.lastIndexOf(taskMarker);
-  if (taskIndex >= 0) {
-    const taskStart = taskIndex + taskMarker.length;
-    const taskTail = text.slice(taskStart);
-    const beginMatch = /\n\s*Begin\. Execute the assigned task to completion\./.exec(taskTail);
-    const visible = (beginMatch ? taskTail.slice(0, beginMatch.index) : taskTail).trim();
-    if (visible) return visible;
-  }
-
-  return text;
 };
 
 export const buildSubagentChildHistorySyncPlan = (

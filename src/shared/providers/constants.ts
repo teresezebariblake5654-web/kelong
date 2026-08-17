@@ -21,7 +21,7 @@
 // ═══════════════════════════════════════════════════════
 
 // ─── Provider Name ──────────────────────────────────────────────────────
-// providerName identifies the LobsterAI internal provider (config key).
+// providerName identifies the Workhorse AI internal provider (config key).
 export const ProviderName = {
   OpenAI: 'openai',
   Gemini: 'gemini',

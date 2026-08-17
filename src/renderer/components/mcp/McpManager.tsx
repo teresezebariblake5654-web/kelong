@@ -6,6 +6,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { mcpCategories,mcpRegistry } from '../../data/mcpRegistry';
 import { i18nService } from '../../services/i18n';
 import { mcpService } from '../../services/mcp';
+import { isYoudaoCloudEnabled } from '../../../shared/featureFlags';
 import {
   buildInstalledMcpItems,
   McpInstalledItem,
@@ -111,6 +112,7 @@ const McpManager: React.FC = () => {
   const servers = useSelector((state: RootState) => state.mcp.servers);
 
   const [activeTab, setActiveTab] = useState<McpTab>('installed');
+  const youdaoCloud = isYoudaoCloudEnabled();
   const [searchQuery, setSearchQuery] = useState('');
   const [actionError, setActionError] = useState('');
   const [pendingDelete, setPendingDelete] = useState<DeleteTarget | null>(null);
@@ -145,6 +147,7 @@ const McpManager: React.FC = () => {
   }, [dispatch]);
 
   useEffect(() => {
+    if (!isYoudaoCloudEnabled()) return;
     let isActive = true;
     const fetchMarketplace = async () => {
       const result = await mcpService.fetchMarketplace();
@@ -166,6 +169,12 @@ const McpManager: React.FC = () => {
     fetchMarketplace();
     return () => { isActive = false; };
   }, []);
+
+  useEffect(() => {
+    if (!isYoudaoCloudEnabled() && activeTab === 'marketplace') {
+      setActiveTab('installed');
+    }
+  }, [activeTab]);
 
   const installedRegistryIds = useMemo(() => {
     const ids = new Set<string>();
@@ -847,6 +856,7 @@ const McpManager: React.FC = () => {
             )}
             <div className={tabIndicatorClass('installed')} />
           </button>
+          {youdaoCloud && (
           <button
             type="button"
             onClick={() => {
@@ -867,6 +877,7 @@ const McpManager: React.FC = () => {
             )}
             <div className={tabIndicatorClass('marketplace')} />
           </button>
+          )}
           <button
             type="button"
             onClick={() => {

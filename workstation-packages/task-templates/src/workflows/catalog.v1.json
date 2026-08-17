@@ -1,0 +1,6080 @@
+{
+  "schemaVersion": "1.0.0",
+  "catalogId": "agent-workstation-27-workflows",
+  "generatedFor": "AI员工助手",
+  "architecture": {
+    "principle": "统一执行引擎 + 配置化工作流，不为 27 个任务分别复制一套后端。",
+    "localExecution": [
+      "原始 Excel/CSV/图片/PDF 解析",
+      "字段识别、清洗、关联、计算、异常检测",
+      "结果 XLSX 生成",
+      "公司规则本地保存"
+    ],
+    "cloudBackend": [
+      "账号、License、组织/设备授权",
+      "工作流目录与版本元数据",
+      "额度账户和用量流水",
+      "只接收聚合指标/脱敏异常摘要的 DeepSeek 总结",
+      "可选的模板更新和审计元数据"
+    ],
+    "forbiddenCloudPayloadsByDefault": [
+      "原始工作簿",
+      "完整员工档案",
+      "身份证、银行卡、手机号",
+      "发票原图",
+      "完整客户收货信息"
+    ],
+    "deterministicRule": "工资、金额、库存、账龄、匹配分数和状态判定必须由规则引擎计算；大模型不得作为唯一计算器或审批者。"
+  },
+  "runtime": {
+    "recommendedLocations": {
+      "workflowCatalog": "packages/task-templates/src/workflows/",
+      "workflowTypes": "packages/shared/src/workflows/",
+      "localExecutor": "packages/data-engine/src/workflow-runtime/",
+      "cloudMetadataApi": "backend/src/modules/workflows/",
+      "aiSummary": "backend/src/modules/ai-summary/"
+    },
+    "runStates": [
+      "CREATED",
+      "INPUT_LOADED",
+      "VALIDATED",
+      "NEEDS_CONFIRMATION",
+      "RUNNING",
+      "NEEDS_REVIEW",
+      "COMPLETED",
+      "FAILED"
+    ],
+    "genericOperators": [
+      "loadWorkbook",
+      "detectHeader",
+      "normalizeColumns",
+      "inferTypes",
+      "validateRequiredFields",
+      "deduplicate",
+      "fuzzyDuplicate",
+      "join",
+      "aggregate",
+      "derive",
+      "filter",
+      "classify",
+      "bucket",
+      "score",
+      "scoredMatch",
+      "subsetMatch",
+      "pareto",
+      "funnel",
+      "outlier",
+      "buildSourceTrace",
+      "exportWorkbook",
+      "buildAiSummaryPayload"
+    ],
+    "outputWorkbookRules": [
+      "首个 Sheet 必须是用户可直接使用的主结果",
+      "异常必须放独立 Sheet，禁止混在主结果里让用户自己筛",
+      "每行保留 sourceFile/sourceSheet/sourceRow 或 traceId",
+      "结果文件包含规则版本、执行时间、输入文件 SHA-256、控制总额",
+      "任何自动修复都保留 before/after/reason"
+    ],
+    "interactionRules": [
+      "自动别名识别，不强制用户手工映射全部字段",
+      "每次最多询问 2 个关键问题",
+      "无法确定的字段进入待人工，不得猜测",
+      "高风险任务必须提供最终确认页"
+    ]
+  },
+  "workflows": [
+    {
+      "id": "PROD-MATERIAL-DAILY-001",
+      "category": "production",
+      "name": "物料日清",
+      "deliveryWave": 1,
+      "complexity": "medium",
+      "businessGoal": "把期初、入库、领用、退料和实盘合并，输出理论结存、实盘差异和待处理物料。",
+      "inputRoles": [
+        {
+          "role": "opening_stock",
+          "required": true,
+          "requiredFields": [
+            "materialCode",
+            "materialName",
+            "warehouse",
+            "openingQty"
+          ],
+          "description": "期初库存"
+        },
+        {
+          "role": "movements",
+          "required": true,
+          "requiredFields": [
+            "date",
+            "materialCode",
+            "movementType",
+            "qty"
+          ],
+          "description": "入库、领用、退料、调拨记录"
+        },
+        {
+          "role": "physical_count",
+          "required": false,
+          "requiredFields": [
+            "materialCode",
+            "warehouse",
+            "actualQty"
+          ],
+          "description": "当天实盘结果"
+        }
+      ],
+      "companyRuleKeys": [
+        "materialDaily.toleranceQty",
+        "materialDaily.toleranceRate",
+        "materialDaily.negativeStockBlocked"
+      ],
+      "criticalQuestions": [
+        "库存差异容差是多少？",
+        "是否禁止理论负库存？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "mapMovementType",
+          "params": {
+            "in": [
+              "入库",
+              "收料",
+              "采购入库"
+            ],
+            "out": [
+              "领料",
+              "出库",
+              "生产领用"
+            ],
+            "return": [
+              "退料",
+              "退库"
+            ]
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "groupBy": [
+              "materialCode",
+              "warehouse"
+            ],
+            "metrics": {
+              "inQty": "sum(in)",
+              "outQty": "sum(out)",
+              "returnQty": "sum(return)"
+            }
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "opening_stock",
+              "movements",
+              "physical_count"
+            ],
+            "keys": [
+              "materialCode",
+              "warehouse"
+            ],
+            "joinType": "full"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "theoreticalClosingQty": "openingQty + inQty - outQty + returnQty",
+              "varianceQty": "actualQty - theoreticalClosingQty",
+              "varianceRate": "varianceQty / max(abs(theoreticalClosingQty), 1)"
+            }
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "status",
+            "rules": [
+              "negative_stock",
+              "missing_count",
+              "over_tolerance",
+              "normal"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "theoreticalClosingQty = openingQty + inQty - outQty + returnQty",
+        "varianceQty = actualQty - theoreticalClosingQty",
+        "varianceRate = varianceQty / max(abs(theoreticalClosingQty), 1)"
+      ],
+      "exceptionRules": [
+        "理论结存小于 0",
+        "实盘缺失",
+        "绝对差异超过 toleranceQty",
+        "差异率超过 toleranceRate",
+        "同物料同仓库出现重复实盘"
+      ],
+      "output": {
+        "fileNameTemplate": "物料日清结果_{runDate}.xlsx",
+        "sheets": [
+          "日清总表",
+          "库存差异",
+          "负库存",
+          "缺失数据",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "负库存",
+        "差异超容差",
+        "实盘重复",
+        "单位不一致"
+      ],
+      "acceptanceCriteria": [
+        "每个物料+仓库唯一一行",
+        "理论结存公式正确",
+        "异常行可追溯到原文件和原行"
+      ]
+    },
+    {
+      "id": "PROD-CONSUMPTION-CHECK-002",
+      "category": "production",
+      "name": "核对物料消耗",
+      "deliveryWave": 1,
+      "complexity": "high",
+      "businessGoal": "按 BOM、合格产量和损耗率计算标准耗用，与实际领料/退料比较，识别超耗、少耗和错料。",
+      "inputRoles": [
+        {
+          "role": "bom",
+          "required": true,
+          "requiredFields": [
+            "productCode",
+            "materialCode",
+            "unitUsage"
+          ],
+          "description": "产品 BOM 或标准耗用"
+        },
+        {
+          "role": "production_output",
+          "required": true,
+          "requiredFields": [
+            "workOrderNo",
+            "productCode",
+            "goodQty"
+          ],
+          "description": "工单合格产量"
+        },
+        {
+          "role": "material_issue",
+          "required": true,
+          "requiredFields": [
+            "workOrderNo",
+            "materialCode",
+            "issueQty"
+          ],
+          "description": "实际领料与退料"
+        }
+      ],
+      "companyRuleKeys": [
+        "consumption.defaultLossRate",
+        "consumption.overuseToleranceRate",
+        "consumption.underuseToleranceRate",
+        "consumption.allowSubstituteMaterial"
+      ],
+      "criticalQuestions": [
+        "默认损耗率是多少？",
+        "是否允许替代料？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "normalizeSignedQuantity",
+          "params": {
+            "issuePositive": true,
+            "returnNegative": true
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "production_output",
+              "bom"
+            ],
+            "keys": [
+              "productCode"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "standardQty": "goodQty * unitUsage * (1 + lossRate)"
+            }
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "groupBy": [
+              "workOrderNo",
+              "materialCode"
+            ],
+            "metrics": {
+              "actualQty": "sum(issueQty)"
+            }
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "standard_consumption",
+              "actual_issue"
+            ],
+            "keys": [
+              "workOrderNo",
+              "materialCode"
+            ],
+            "joinType": "full"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "varianceQty": "actualQty - standardQty",
+              "varianceRate": "varianceQty / max(standardQty, 1)"
+            }
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "status",
+            "rules": [
+              "wrong_material",
+              "overuse",
+              "underuse",
+              "normal"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "standardQty = goodQty * unitUsage * (1 + lossRate)",
+        "actualQty = issueQty - returnQty",
+        "varianceRate = (actualQty - standardQty) / max(standardQty, 1)"
+      ],
+      "exceptionRules": [
+        "实际领用但 BOM 无此物料",
+        "BOM 有物料但实际耗用缺失",
+        "超耗率超过阈值",
+        "负耗用",
+        "工单或物料编码为空"
+      ],
+      "output": {
+        "fileNameTemplate": "物料消耗核对_{runDate}.xlsx",
+        "sheets": [
+          "工单耗用核对",
+          "超耗清单",
+          "少耗清单",
+          "错料清单",
+          "缺失清单",
+          "单位异常",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "错料",
+        "替代料未审批",
+        "超耗超过阈值",
+        "BOM 版本缺失"
+      ],
+      "acceptanceCriteria": [
+        "标准耗用与实际耗用均按工单+物料聚合",
+        "退料正确冲减",
+        "超耗和错料分别输出"
+      ]
+    },
+    {
+      "id": "PROD-PLAN-CLEAN-003",
+      "category": "production",
+      "name": "清理生产计划",
+      "deliveryWave": 1,
+      "complexity": "medium",
+      "businessGoal": "清洗订单/计划，去重、补齐关键字段、计算净需求与排产优先级，输出可执行计划和阻塞项。",
+      "inputRoles": [
+        {
+          "role": "production_plan",
+          "required": true,
+          "requiredFields": [
+            "planNo",
+            "productCode",
+            "planQty",
+            "dueDate"
+          ],
+          "description": "原始生产计划"
+        },
+        {
+          "role": "customer_orders",
+          "required": false,
+          "requiredFields": [
+            "orderNo",
+            "productCode",
+            "orderQty",
+            "dueDate"
+          ],
+          "description": "客户订单"
+        },
+        {
+          "role": "finished_stock",
+          "required": false,
+          "requiredFields": [
+            "productCode",
+            "availableQty"
+          ],
+          "description": "成品可用库存"
+        },
+        {
+          "role": "capacity",
+          "required": false,
+          "requiredFields": [
+            "lineCode",
+            "date",
+            "availableHours",
+            "unitsPerHour"
+          ],
+          "description": "产线能力"
+        }
+      ],
+      "companyRuleKeys": [
+        "plan.priorityRule",
+        "plan.freezeDays",
+        "plan.defaultLeadDays",
+        "plan.allowOverPlanRate"
+      ],
+      "criticalQuestions": [
+        "优先按交期还是客户等级？",
+        "计划冻结期是多少天？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "deduplicate",
+          "params": {
+            "keys": [
+              "planNo",
+              "productCode"
+            ],
+            "strategy": "keep_latest_nonempty"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "netRequiredQty": "max(planQty - availableQty, 0)",
+              "requiredHours": "netRequiredQty / max(unitsPerHour, 0.000001)",
+              "daysToDue": "dateDiff(runDate, dueDate)"
+            }
+          }
+        },
+        {
+          "op": "score",
+          "params": {
+            "field": "priorityScore",
+            "factors": [
+              "overdue",
+              "dueDate",
+              "customerPriority",
+              "materialReady",
+              "freezeWindow"
+            ]
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "status",
+            "rules": [
+              "blocked_missing_data",
+              "blocked_capacity",
+              "overdue",
+              "ready"
+            ]
+          }
+        },
+        {
+          "op": "sort",
+          "params": {
+            "by": [
+              "status",
+              "priorityScore desc",
+              "dueDate asc"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "netRequiredQty = max(planQty - availableQty, 0)",
+        "requiredHours = netRequiredQty / unitsPerHour",
+        "capacityGapHours = requiredHours - availableHours"
+      ],
+      "exceptionRules": [
+        "计划号重复",
+        "产品编码缺失",
+        "数量 <= 0",
+        "交期早于计划日期",
+        "产能不足",
+        "库存已覆盖但仍计划生产"
+      ],
+      "output": {
+        "fileNameTemplate": "可执行生产计划_{runDate}.xlsx",
+        "sheets": [
+          "可执行计划",
+          "阻塞计划",
+          "重复计划",
+          "产能缺口",
+          "库存覆盖",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "冻结期内计划被改动",
+        "产能缺口",
+        "关键字段缺失",
+        "逾期计划"
+      ],
+      "acceptanceCriteria": [
+        "重复计划不会重复计量",
+        "可执行与阻塞计划严格分离",
+        "所有排序有可解释优先级"
+      ]
+    },
+    {
+      "id": "PROD-PROGRESS-004",
+      "category": "production",
+      "name": "生产进度/产量",
+      "deliveryWave": 1,
+      "complexity": "medium",
+      "businessGoal": "合并计划和报工，计算完成率、日产量、节拍偏差、预计完工时间和延期风险。",
+      "inputRoles": [
+        {
+          "role": "plan",
+          "required": true,
+          "requiredFields": [
+            "workOrderNo",
+            "productCode",
+            "planQty",
+            "startDate",
+            "dueDate"
+          ],
+          "description": "生产计划/工单"
+        },
+        {
+          "role": "work_report",
+          "required": true,
+          "requiredFields": [
+            "reportDate",
+            "workOrderNo",
+            "goodQty",
+            "scrapQty",
+            "workHours"
+          ],
+          "description": "报工与产量"
+        },
+        {
+          "role": "work_calendar",
+          "required": false,
+          "requiredFields": [
+            "date",
+            "isWorkday"
+          ],
+          "description": "工作日历"
+        }
+      ],
+      "companyRuleKeys": [
+        "progress.warningCompletionRate",
+        "progress.maxScrapRate",
+        "progress.workdayHours"
+      ],
+      "criticalQuestions": [
+        "延期预警提前几天？",
+        "报废率上限是多少？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "groupBy": [
+              "workOrderNo"
+            ],
+            "metrics": {
+              "goodQty": "sum",
+              "scrapQty": "sum",
+              "workHours": "sum"
+            }
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "plan",
+              "work_report"
+            ],
+            "keys": [
+              "workOrderNo"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "completionRate": "goodQty / max(planQty, 1)",
+              "scrapRate": "scrapQty / max(goodQty + scrapQty, 1)",
+              "avgHourlyOutput": "goodQty / max(workHours, 0.000001)",
+              "remainingQty": "max(planQty - goodQty, 0)",
+              "estimatedRemainingHours": "remainingQty / max(avgHourlyOutput, 0.000001)"
+            }
+          }
+        },
+        {
+          "op": "forecastFinish",
+          "params": {
+            "calendar": "company_work_calendar"
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "risk",
+            "rules": [
+              "overdue",
+              "delay_risk",
+              "high_scrap",
+              "on_track"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "completionRate = cumulativeGoodQty / planQty",
+        "scrapRate = scrapQty / (goodQty + scrapQty)",
+        "estimatedFinish = runDate + remainingQty / averageDailyGoodQty"
+      ],
+      "exceptionRules": [
+        "完成率超过 100% 且无超产许可",
+        "报废率超限",
+        "连续无报工",
+        "预计完工晚于交期",
+        "工单已结案仍有报工"
+      ],
+      "output": {
+        "fileNameTemplate": "生产进度产量_{runDate}.xlsx",
+        "sheets": [
+          "工单进度",
+          "延期风险",
+          "产量日报",
+          "高报废工单",
+          "数据异常",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "完成率异常",
+        "延期风险",
+        "连续无报工",
+        "报废超限"
+      ],
+      "acceptanceCriteria": [
+        "计划量与累计产量口径一致",
+        "完成率和预计完工可复算",
+        "日报与工单汇总一致"
+      ]
+    },
+    {
+      "id": "PROD-QUALITY-005",
+      "category": "production",
+      "name": "质量异常",
+      "deliveryWave": 2,
+      "complexity": "high",
+      "businessGoal": "按检验标准判断合格/不合格，形成不合格品隔离清单、缺陷 Pareto 和批次/工单追溯。",
+      "inputRoles": [
+        {
+          "role": "inspection",
+          "required": true,
+          "requiredFields": [
+            "inspectionNo",
+            "date",
+            "productCode",
+            "lotNo",
+            "workOrderNo",
+            "item",
+            "result"
+          ],
+          "description": "检验记录"
+        },
+        {
+          "role": "quality_standard",
+          "required": true,
+          "requiredFields": [
+            "productCode",
+            "item",
+            "lowerLimit",
+            "upperLimit"
+          ],
+          "description": "质量标准"
+        }
+      ],
+      "companyRuleKeys": [
+        "quality.defaultSamplingRule",
+        "quality.criticalDefects",
+        "quality.failRateThreshold"
+      ],
+      "criticalQuestions": [
+        "哪些缺陷属于致命缺陷？",
+        "不良率预警值是多少？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "inspection",
+              "quality_standard"
+            ],
+            "keys": [
+              "productCode",
+              "item"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "evaluateLimit",
+          "params": {
+            "resultField": "result",
+            "lower": "lowerLimit",
+            "upper": "upperLimit",
+            "output": "passFlag"
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "groupBy": [
+              "productCode",
+              "lotNo",
+              "workOrderNo"
+            ],
+            "metrics": {
+              "checkedQty": "count",
+              "failedQty": "count(passFlag=false)"
+            }
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "failRate": "failedQty / max(checkedQty, 1)"
+            }
+          }
+        },
+        {
+          "op": "pareto",
+          "params": {
+            "category": "defectType",
+            "metric": "failedQty"
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "disposition",
+            "rules": [
+              "quarantine",
+              "rework",
+              "accept_with_deviation",
+              "release"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "passFlag = lowerLimit <= result <= upperLimit",
+        "failRate = failedQty / checkedQty",
+        "paretoShare = cumulativeDefectQty / totalDefectQty"
+      ],
+      "exceptionRules": [
+        "无对应检验标准",
+        "致命缺陷",
+        "批次不良率超限",
+        "检验值类型错误",
+        "同检验单重复"
+      ],
+      "output": {
+        "fileNameTemplate": "质量异常处理_{runDate}.xlsx",
+        "sheets": [
+          "质量总览",
+          "隔离清单",
+          "缺陷Pareto",
+          "批次追溯",
+          "缺标准",
+          "重复检验",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "致命缺陷",
+        "隔离/放行决定",
+        "标准缺失",
+        "偏差放行"
+      ],
+      "acceptanceCriteria": [
+        "任何不合格批次不会进入自动放行",
+        "缺陷可追溯至工单和原始检验行",
+        "Pareto 汇总与异常明细一致"
+      ]
+    },
+    {
+      "id": "PROD-DOWNTIME-CLOSE-006",
+      "category": "production",
+      "name": "停机损失/工单结案",
+      "deliveryWave": 2,
+      "complexity": "high",
+      "businessGoal": "计算停机时长和产能损失，并检查工单产量、耗料、质量、设备异常是否满足结案条件。",
+      "inputRoles": [
+        {
+          "role": "downtime",
+          "required": true,
+          "requiredFields": [
+            "machineCode",
+            "startTime",
+            "endTime",
+            "reason"
+          ],
+          "description": "停机记录"
+        },
+        {
+          "role": "work_order",
+          "required": true,
+          "requiredFields": [
+            "workOrderNo",
+            "productCode",
+            "planQty",
+            "status"
+          ],
+          "description": "工单主数据"
+        },
+        {
+          "role": "work_report",
+          "required": true,
+          "requiredFields": [
+            "workOrderNo",
+            "goodQty",
+            "scrapQty",
+            "workHours"
+          ],
+          "description": "报工"
+        },
+        {
+          "role": "material_summary",
+          "required": false,
+          "requiredFields": [
+            "workOrderNo",
+            "standardQty",
+            "actualQty"
+          ],
+          "description": "物料核对结果"
+        },
+        {
+          "role": "quality_open_items",
+          "required": false,
+          "requiredFields": [
+            "workOrderNo",
+            "openIssueCount"
+          ],
+          "description": "未关闭质量问题"
+        }
+      ],
+      "companyRuleKeys": [
+        "downtime.defaultUnitsPerHour",
+        "close.outputToleranceRate",
+        "close.requireNoOpenQualityIssue"
+      ],
+      "criticalQuestions": [
+        "工单产量容差是多少？",
+        "有未关闭质量问题能否结案？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "downtimeMinutes": "minutesBetween(startTime, endTime)",
+              "lostOutput": "downtimeMinutes / 60 * unitsPerHour"
+            }
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "groupBy": [
+              "machineCode",
+              "reason"
+            ],
+            "metrics": {
+              "downtimeMinutes": "sum",
+              "lostOutput": "sum"
+            }
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "work_order",
+              "work_report",
+              "material_summary",
+              "quality_open_items"
+            ],
+            "keys": [
+              "workOrderNo"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "evaluateCloseChecklist",
+          "params": {
+            "checks": [
+              "output_complete",
+              "material_balanced",
+              "quality_closed",
+              "no_invalid_status"
+            ]
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "closeDecision",
+            "rules": [
+              "closable",
+              "blocked",
+              "needs_review"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "downtimeMinutes = endTime - startTime",
+        "lostOutput = downtimeHours * standardUnitsPerHour",
+        "outputGapRate = (goodQty + allowedScrapQty - planQty) / max(planQty, 1)"
+      ],
+      "exceptionRules": [
+        "结束时间早于开始时间",
+        "停机区间重叠",
+        "产量未达结案阈值",
+        "耗料未平",
+        "质量问题未关闭",
+        "已结案工单仍发生报工"
+      ],
+      "output": {
+        "fileNameTemplate": "停机损失与工单结案_{runDate}.xlsx",
+        "sheets": [
+          "停机损失",
+          "停机原因分析",
+          "可结案工单",
+          "阻塞工单",
+          "重叠与数据异常",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "任何结案阻塞项",
+        "跨班次重叠停机",
+        "损失金额需要财务规则",
+        "已结案后新增交易"
+      ],
+      "acceptanceCriteria": [
+        "停机时长不重复计算",
+        "工单结案必须通过全部必选检查",
+        "阻塞原因逐项可见"
+      ]
+    },
+    {
+      "id": "HR-PAYROLL-001",
+      "category": "hr",
+      "name": "工资核算",
+      "deliveryWave": 1,
+      "complexity": "very_high",
+      "businessGoal": "合并员工、合同/薪资标准、考勤、请假、补贴扣款和社保税费规则，生成工资表、银行发薪表和异常表。",
+      "inputRoles": [
+        {
+          "role": "employee_master",
+          "required": true,
+          "requiredFields": [
+            "employeeId",
+            "employeeName",
+            "department",
+            "employmentStatus"
+          ],
+          "description": "员工花名册"
+        },
+        {
+          "role": "salary_standard",
+          "required": true,
+          "requiredFields": [
+            "employeeId",
+            "baseSalary"
+          ],
+          "description": "薪资标准/合同"
+        },
+        {
+          "role": "attendance_summary",
+          "required": true,
+          "requiredFields": [
+            "employeeId",
+            "workDays",
+            "absenceDays",
+            "overtimeHours",
+            "lateMinutes"
+          ],
+          "description": "月度考勤"
+        },
+        {
+          "role": "adjustments",
+          "required": false,
+          "requiredFields": [
+            "employeeId",
+            "itemName",
+            "amount",
+            "direction"
+          ],
+          "description": "补贴、奖金、扣款"
+        },
+        {
+          "role": "social_tax",
+          "required": false,
+          "requiredFields": [
+            "employeeId",
+            "employeeSocial",
+            "employeeFund",
+            "personalTax"
+          ],
+          "description": "社保公积金个税结果或基数"
+        }
+      ],
+      "companyRuleKeys": [
+        "payroll.payableDays",
+        "payroll.overtimeMultiplier",
+        "payroll.lateDeductionRule",
+        "payroll.roundingScale",
+        "payroll.bankExportTemplate"
+      ],
+      "criticalQuestions": [
+        "加班工资按什么规则计算？",
+        "迟到和缺勤如何扣款？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "employee_master",
+              "salary_standard",
+              "attendance_summary",
+              "social_tax"
+            ],
+            "keys": [
+              "employeeId"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "role": "adjustments",
+            "groupBy": [
+              "employeeId",
+              "direction"
+            ],
+            "metrics": {
+              "amount": "sum"
+            }
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "dailySalary": "baseSalary / payableDays",
+              "absenceDeduction": "absenceDays * dailySalary",
+              "overtimePay": "overtimeHours * hourlySalary * overtimeMultiplier",
+              "grossPay": "baseSalary + overtimePay + allowance + bonus",
+              "totalDeduction": "absenceDeduction + lateDeduction + employeeSocial + employeeFund + personalTax + otherDeduction",
+              "netPay": "grossPay - totalDeduction"
+            }
+          }
+        },
+        {
+          "op": "reconcile",
+          "params": {
+            "checks": [
+              "employee_count",
+              "gross_minus_deduction_equals_net",
+              "bank_total_equals_payroll_total"
+            ]
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "status",
+            "rules": [
+              "blocked",
+              "needs_review",
+              "ready_to_pay"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "dailySalary = baseSalary / payableDays",
+        "grossPay = baseSalary + overtimePay + allowances + bonuses",
+        "netPay = grossPay - deductions - socialInsurance - housingFund - personalTax",
+        "bankTotal must equal sum(netPay of ready_to_pay employees)"
+      ],
+      "exceptionRules": [
+        "员工主数据缺失",
+        "重复员工",
+        "在职状态异常",
+        "负工资",
+        "净工资突变超过阈值",
+        "银行卡缺失或重复",
+        "考勤整月缺失",
+        "公式不平"
+      ],
+      "output": {
+        "fileNameTemplate": "本月工资核算_{payMonth}.xlsx",
+        "sheets": [
+          "工资明细",
+          "银行发薪",
+          "部门汇总",
+          "异常待人工",
+          "规则快照",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "所有异常员工",
+        "负工资",
+        "工资环比突变",
+        "新入职/离职边界",
+        "最终发薪确认"
+      ],
+      "acceptanceCriteria": [
+        "系统不得自动发送工资或付款",
+        "工资总额与银行发薪总额一致",
+        "每个金额可追溯到规则和源数据"
+      ],
+      "specialAdapter": {
+        "name": "PayrollPolicyAdapter",
+        "required": true,
+        "note": "各地社保和个税规则必须配置化，不能由大模型自由计算"
+      }
+    },
+    {
+      "id": "HR-ATTENDANCE-002",
+      "category": "hr",
+      "name": "考勤异常",
+      "deliveryWave": 1,
+      "complexity": "medium",
+      "businessGoal": "按排班和打卡记录识别迟到、早退、缺卡、旷工、重复打卡、跨日班次和异常加班。",
+      "inputRoles": [
+        {
+          "role": "employee_master",
+          "required": true,
+          "requiredFields": [
+            "employeeId",
+            "employeeName",
+            "employmentStatus"
+          ],
+          "description": "员工名单"
+        },
+        {
+          "role": "schedule",
+          "required": true,
+          "requiredFields": [
+            "employeeId",
+            "date",
+            "shiftStart",
+            "shiftEnd"
+          ],
+          "description": "排班"
+        },
+        {
+          "role": "punch",
+          "required": true,
+          "requiredFields": [
+            "employeeId",
+            "punchTime"
+          ],
+          "description": "打卡流水"
+        },
+        {
+          "role": "leave",
+          "required": false,
+          "requiredFields": [
+            "employeeId",
+            "date",
+            "leaveType",
+            "hours"
+          ],
+          "description": "请假记录"
+        }
+      ],
+      "companyRuleKeys": [
+        "attendance.lateGraceMinutes",
+        "attendance.earlyLeaveGraceMinutes",
+        "attendance.missingPunchRule",
+        "attendance.overtimeMinimumMinutes"
+      ],
+      "criticalQuestions": [
+        "迟到宽限几分钟？",
+        "缺一次卡如何处理？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "pairPunches",
+          "params": {
+            "strategy": "first_in_last_out",
+            "supportOvernightShift": true
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "schedule",
+              "paired_punch",
+              "leave",
+              "employee_master"
+            ],
+            "keys": [
+              "employeeId",
+              "date"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "lateMinutes": "max(actualIn - shiftStart - grace, 0)",
+              "earlyLeaveMinutes": "max(shiftEnd - actualOut - grace, 0)",
+              "workedMinutes": "actualOut - actualIn - breakMinutes",
+              "overtimeMinutes": "max(workedMinutes - scheduledMinutes, 0)"
+            }
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "attendanceStatus",
+            "rules": [
+              "absent",
+              "missing_punch",
+              "late",
+              "early_leave",
+              "abnormal_overtime",
+              "normal"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "lateMinutes = max(actualIn - scheduledIn - graceMinutes, 0)",
+        "earlyLeaveMinutes = max(scheduledOut - actualOut - graceMinutes, 0)",
+        "workedMinutes = actualOut - actualIn - breaks"
+      ],
+      "exceptionRules": [
+        "排班缺失",
+        "打卡缺失",
+        "同一分钟重复打卡",
+        "跨日班次无法配对",
+        "请假与出勤冲突",
+        "离职后打卡"
+      ],
+      "output": {
+        "fileNameTemplate": "考勤异常_{month}.xlsx",
+        "sheets": [
+          "考勤明细",
+          "异常待确认",
+          "加班统计",
+          "缺卡清单",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "旷工判定",
+        "跨日班次",
+        "请假冲突",
+        "异常加班"
+      ],
+      "acceptanceCriteria": [
+        "每个员工每天形成唯一考勤结果",
+        "所有异常保留原始打卡时间",
+        "人工修正有审计记录"
+      ]
+    },
+    {
+      "id": "HR-EMPLOYEE-FILE-003",
+      "category": "hr",
+      "name": "员工档案",
+      "deliveryWave": 1,
+      "complexity": "low",
+      "businessGoal": "合并多份花名册，统一员工编号和字段，识别重复员工、缺失证件、合同/证照即将到期。",
+      "inputRoles": [
+        {
+          "role": "employee_files",
+          "required": true,
+          "requiredFields": [
+            "employeeId",
+            "employeeName",
+            "department",
+            "hireDate",
+            "employmentStatus"
+          ],
+          "description": "一个或多个员工档案表"
+        }
+      ],
+      "companyRuleKeys": [
+        "employee.matchRule",
+        "employee.requiredDocuments",
+        "employee.expiryWarningDays"
+      ],
+      "criticalQuestions": [
+        "员工唯一键用工号还是身份证后四位？",
+        "到期前多少天提醒？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "fuzzyMatch",
+          "params": {
+            "entity": "employee",
+            "keys": [
+              "employeeId",
+              "idNumberHash",
+              "phoneHash",
+              "employeeName+hireDate"
+            ]
+          }
+        },
+        {
+          "op": "mergeRecords",
+          "params": {
+            "strategy": "latest_nonempty_with_conflict_log"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "daysToExpiry": "expiryDate - runDate"
+            }
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "status",
+            "rules": [
+              "duplicate_conflict",
+              "missing_required",
+              "expiring",
+              "complete"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "daysToExpiry = expiryDate - runDate",
+        "completenessRate = nonEmptyRequiredFields / requiredFieldCount"
+      ],
+      "exceptionRules": [
+        "工号重复",
+        "姓名相同但证件冲突",
+        "必填档案缺失",
+        "合同/证照已过期",
+        "部门不存在"
+      ],
+      "output": {
+        "fileNameTemplate": "员工档案整理_{runDate}.xlsx",
+        "sheets": [
+          "标准员工档案",
+          "重复冲突",
+          "缺失资料",
+          "到期提醒",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "身份信息冲突",
+        "重复员工合并",
+        "已过期合同",
+        "敏感字段导出"
+      ],
+      "acceptanceCriteria": [
+        "不自动覆盖冲突字段",
+        "敏感字段默认脱敏",
+        "每个合并值保留来源"
+      ]
+    },
+    {
+      "id": "HR-ONBOARD-OFFBOARD-004",
+      "category": "hr",
+      "name": "入离职处理",
+      "deliveryWave": 2,
+      "complexity": "medium",
+      "businessGoal": "根据入职/离职名单和岗位模板生成任务清单，核验账号、设备、合同、社保和资料交接状态。",
+      "inputRoles": [
+        {
+          "role": "employee_changes",
+          "required": true,
+          "requiredFields": [
+            "employeeId",
+            "employeeName",
+            "changeType",
+            "effectiveDate",
+            "department",
+            "position"
+          ],
+          "description": "入职/离职变动"
+        },
+        {
+          "role": "task_template",
+          "required": true,
+          "requiredFields": [
+            "changeType",
+            "department",
+            "taskName",
+            "ownerRole",
+            "dueOffsetDays"
+          ],
+          "description": "公司任务模板"
+        },
+        {
+          "role": "task_status",
+          "required": false,
+          "requiredFields": [
+            "employeeId",
+            "taskName",
+            "status",
+            "completedAt"
+          ],
+          "description": "任务执行状态"
+        }
+      ],
+      "companyRuleKeys": [
+        "onoffboard.defaultOwners",
+        "onoffboard.blockingTasks",
+        "onoffboard.reminderDays"
+      ],
+      "criticalQuestions": [
+        "哪些任务没完成就不能办结？",
+        "任务提前几天提醒？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "expandTemplate",
+          "params": {
+            "source": "task_template",
+            "by": [
+              "changeType",
+              "department"
+            ]
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "dueDate": "effectiveDate + dueOffsetDays"
+            }
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "expanded_tasks",
+              "task_status"
+            ],
+            "keys": [
+              "employeeId",
+              "taskName"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "taskState",
+            "rules": [
+              "overdue",
+              "blocked",
+              "pending",
+              "completed"
+            ]
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "groupBy": [
+              "employeeId"
+            ],
+            "metrics": {
+              "totalTasks": "count",
+              "completedTasks": "count(completed)",
+              "blockingOpen": "count(blocking_open)"
+            }
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "dueDate = effectiveDate + dueOffsetDays",
+        "completionRate = completedTasks / totalTasks"
+      ],
+      "exceptionRules": [
+        "生效日期缺失",
+        "关键任务无负责人",
+        "离职后仍有未归还资产",
+        "账号未停用",
+        "任务逾期"
+      ],
+      "output": {
+        "fileNameTemplate": "入离职任务处理_{runDate}.xlsx",
+        "sheets": [
+          "人员总览",
+          "待办任务",
+          "逾期任务",
+          "阻塞办结",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "资产未归还",
+        "账号未停用",
+        "合同/保密文件缺失",
+        "关键任务逾期"
+      ],
+      "acceptanceCriteria": [
+        "每个人自动展开正确模板",
+        "阻塞任务未完成时不得标记办结",
+        "任务负责人和截止日完整"
+      ]
+    },
+    {
+      "id": "HR-SOCIAL-INSURANCE-005",
+      "category": "hr",
+      "name": "社保核对",
+      "deliveryWave": 2,
+      "complexity": "very_high",
+      "businessGoal": "比对员工在职状态、申报基数和社保公积金扣款，找出漏缴、重复缴、基数异常和入离职月份错误。",
+      "inputRoles": [
+        {
+          "role": "employee_master",
+          "required": true,
+          "requiredFields": [
+            "employeeId",
+            "hireDate",
+            "terminationDate",
+            "employmentStatus"
+          ],
+          "description": "员工状态"
+        },
+        {
+          "role": "declared_base",
+          "required": true,
+          "requiredFields": [
+            "employeeId",
+            "insuranceBase",
+            "fundBase"
+          ],
+          "description": "申报基数"
+        },
+        {
+          "role": "payment_detail",
+          "required": true,
+          "requiredFields": [
+            "employeeId",
+            "insuranceAmount",
+            "fundAmount",
+            "paymentMonth"
+          ],
+          "description": "缴费明细"
+        }
+      ],
+      "companyRuleKeys": [
+        "social.minBase",
+        "social.maxBase",
+        "social.employeeRates",
+        "social.companyRates",
+        "social.joinLeaveMonthRule"
+      ],
+      "criticalQuestions": [
+        "入离职当月如何参保？",
+        "基数上下限采用哪套规则？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "employee_master",
+              "declared_base",
+              "payment_detail"
+            ],
+            "keys": [
+              "employeeId"
+            ],
+            "joinType": "full"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "expectedEmployeeAmount": "clamp(insuranceBase,minBase,maxBase) * employeeRate",
+              "expectedFundAmount": "clamp(fundBase,minFundBase,maxFundBase) * fundRate",
+              "insuranceVariance": "insuranceAmount - expectedEmployeeAmount",
+              "fundVariance": "fundAmount - expectedFundAmount"
+            }
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "status",
+            "rules": [
+              "missing_payment",
+              "duplicate_payment",
+              "base_out_of_range",
+              "amount_mismatch",
+              "normal"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "expectedAmount = clampedBase * configuredRate",
+        "variance = actualAmount - expectedAmount"
+      ],
+      "exceptionRules": [
+        "在职但无缴费",
+        "离职后继续缴费",
+        "同月重复缴费",
+        "基数低于下限或高于上限",
+        "金额与配置费率不符"
+      ],
+      "output": {
+        "fileNameTemplate": "社保公积金核对_{month}.xlsx",
+        "sheets": [
+          "核对总表",
+          "漏缴清单",
+          "重复缴费",
+          "基数异常",
+          "金额差异",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "所有差异",
+        "地区规则版本不明确",
+        "入离职边界月份",
+        "补缴情形"
+      ],
+      "acceptanceCriteria": [
+        "规则版本写入结果文件",
+        "不根据大模型猜测费率",
+        "实际与预期金额可复算"
+      ],
+      "specialAdapter": {
+        "name": "RegionalSocialPolicyAdapter",
+        "required": true,
+        "note": "地区政策必须由管理员维护版本和生效日期"
+      }
+    },
+    {
+      "id": "HR-RECRUITMENT-FUNNEL-006",
+      "category": "hr",
+      "name": "招聘漏斗",
+      "deliveryWave": 2,
+      "complexity": "medium",
+      "businessGoal": "统一候选人阶段，计算来源转化、阶段转化、停留时长、招聘周期和招聘缺口。",
+      "inputRoles": [
+        {
+          "role": "candidates",
+          "required": true,
+          "requiredFields": [
+            "candidateId",
+            "position",
+            "source",
+            "stage",
+            "stageDate"
+          ],
+          "description": "候选人流水或当前表"
+        },
+        {
+          "role": "headcount_plan",
+          "required": false,
+          "requiredFields": [
+            "position",
+            "plannedHeadcount",
+            "targetDate"
+          ],
+          "description": "招聘计划"
+        }
+      ],
+      "companyRuleKeys": [
+        "recruitment.stageOrder",
+        "recruitment.staleDays",
+        "recruitment.duplicateMatchRule"
+      ],
+      "criticalQuestions": [
+        "招聘阶段顺序是什么？",
+        "候选人停留多少天算卡住？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "deduplicateEntity",
+          "params": {
+            "entity": "candidate",
+            "keys": [
+              "phoneHash",
+              "emailHash",
+              "name+position"
+            ]
+          }
+        },
+        {
+          "op": "mapStage",
+          "params": {
+            "targetStages": [
+              "new",
+              "screening",
+              "interview",
+              "offer",
+              "hired",
+              "rejected"
+            ]
+          }
+        },
+        {
+          "op": "calculateStageDurations",
+          "params": {
+            "entityKey": "candidateId",
+            "dateField": "stageDate"
+          }
+        },
+        {
+          "op": "funnel",
+          "params": {
+            "groupBy": [
+              "position",
+              "source"
+            ],
+            "stageOrderKey": "recruitment.stageOrder"
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "funnel",
+              "headcount_plan"
+            ],
+            "keys": [
+              "position"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "hiringGap": "plannedHeadcount - hiredCount"
+            }
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "stageConversion = nextStageCount / currentStageCount",
+        "timeToHire = hireDate - firstApplicationDate",
+        "hiringGap = planned - hired"
+      ],
+      "exceptionRules": [
+        "候选人重复",
+        "阶段倒退但无说明",
+        "阶段日期缺失",
+        "停留超期",
+        "offer 接受但未入职"
+      ],
+      "output": {
+        "fileNameTemplate": "招聘漏斗分析_{runDate}.xlsx",
+        "sheets": [
+          "招聘漏斗",
+          "来源转化",
+          "停滞候选人",
+          "招聘缺口",
+          "重复候选人",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "重复候选人合并",
+        "offer/入职状态冲突",
+        "长期停滞"
+      ],
+      "acceptanceCriteria": [
+        "漏斗人数按候选人去重",
+        "来源与职位均可下钻",
+        "阶段转化口径固定"
+      ]
+    },
+    {
+      "id": "HR-PERFORMANCE-DISTRIBUTION-007",
+      "category": "hr",
+      "name": "绩效分布",
+      "deliveryWave": 2,
+      "complexity": "high",
+      "businessGoal": "校验绩效评分，按部门/职级计算分布、均值、中位数、离群值和强制分布偏差，输出校准清单。",
+      "inputRoles": [
+        {
+          "role": "performance",
+          "required": true,
+          "requiredFields": [
+            "employeeId",
+            "department",
+            "level",
+            "score",
+            "rating"
+          ],
+          "description": "绩效结果"
+        },
+        {
+          "role": "distribution_rule",
+          "required": false,
+          "requiredFields": [
+            "groupKey",
+            "rating",
+            "targetMinRate",
+            "targetMaxRate"
+          ],
+          "description": "公司分布规则"
+        }
+      ],
+      "companyRuleKeys": [
+        "performance.groupBy",
+        "performance.ratingBands",
+        "performance.outlierZScore",
+        "performance.minimumGroupSize"
+      ],
+      "criticalQuestions": [
+        "按部门还是部门+职级校准？",
+        "是否启用目标分布区间？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "validateRange",
+          "params": {
+            "field": "score",
+            "min": 0,
+            "max": 100
+          }
+        },
+        {
+          "op": "mapRating",
+          "params": {
+            "from": "score",
+            "bandsKey": "performance.ratingBands"
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "groupBy": [
+              "department",
+              "level",
+              "rating"
+            ],
+            "metrics": {
+              "employeeCount": "count",
+              "avgScore": "avg",
+              "medianScore": "median"
+            }
+          }
+        },
+        {
+          "op": "distributionCheck",
+          "params": {
+            "ruleRole": "distribution_rule"
+          }
+        },
+        {
+          "op": "outlier",
+          "params": {
+            "method": "zscore_or_iqr",
+            "groupBy": [
+              "department",
+              "level"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "ratingRate = ratingCount / groupEmployeeCount",
+        "zScore = (score - groupMean) / groupStdDev"
+      ],
+      "exceptionRules": [
+        "员工重复评分",
+        "评分越界",
+        "评级与分数不匹配",
+        "小样本强制分布",
+        "分布超规则",
+        "极端离群"
+      ],
+      "output": {
+        "fileNameTemplate": "绩效分布与校准_{cycle}.xlsx",
+        "sheets": [
+          "绩效分布",
+          "校准建议",
+          "离群人员",
+          "数据异常",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "任何个人评级调整",
+        "小于最小样本组",
+        "分布规则冲突",
+        "离群值"
+      ],
+      "acceptanceCriteria": [
+        "系统只提出校准清单不自动改绩效",
+        "统计结果不暴露给无权限人员",
+        "分组口径可复算"
+      ]
+    },
+    {
+      "id": "FIN-EXPENSE-CLEAN-001",
+      "category": "finance",
+      "name": "费用整理",
+      "deliveryWave": 1,
+      "complexity": "medium",
+      "businessGoal": "清洗报销/费用流水，统一科目、部门、项目和供应商，识别重复报销、缺票、超标准和异常金额。",
+      "inputRoles": [
+        {
+          "role": "expense",
+          "required": true,
+          "requiredFields": [
+            "expenseId",
+            "date",
+            "employeeOrVendor",
+            "amount",
+            "description"
+          ],
+          "description": "费用/报销明细"
+        },
+        {
+          "role": "expense_policy",
+          "required": false,
+          "requiredFields": [
+            "expenseType",
+            "limitAmount",
+            "receiptRequired"
+          ],
+          "description": "费用标准"
+        },
+        {
+          "role": "mapping",
+          "required": false,
+          "requiredFields": [
+            "keyword",
+            "accountCode",
+            "department",
+            "project"
+          ],
+          "description": "历史分类规则"
+        }
+      ],
+      "companyRuleKeys": [
+        "expense.duplicateWindowDays",
+        "expense.amountTolerance",
+        "expense.defaultAccount",
+        "expense.receiptRequired"
+      ],
+      "criticalQuestions": [
+        "重复费用在几天内判定？",
+        "无匹配科目时怎么处理？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "normalizeAmount",
+          "params": {
+            "currencyAware": true,
+            "negativePolicy": "preserve"
+          }
+        },
+        {
+          "op": "ruleBasedClassify",
+          "params": {
+            "mappingRole": "mapping",
+            "fallback": "needs_review"
+          }
+        },
+        {
+          "op": "fuzzyDuplicate",
+          "params": {
+            "keys": [
+              "employeeOrVendor",
+              "amount",
+              "date",
+              "description"
+            ],
+            "dateWindowKey": "expense.duplicateWindowDays"
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "expense",
+              "expense_policy"
+            ],
+            "keys": [
+              "expenseType"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "status",
+            "rules": [
+              "duplicate",
+              "over_limit",
+              "missing_receipt",
+              "unmapped",
+              "ready"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "taxIncludedAmount = netAmount + taxAmount",
+        "overLimitAmount = max(amount - limitAmount, 0)"
+      ],
+      "exceptionRules": [
+        "疑似重复",
+        "缺少发票/附件",
+        "金额超过标准",
+        "科目无法匹配",
+        "日期或金额无效",
+        "负数费用无冲销说明"
+      ],
+      "output": {
+        "fileNameTemplate": "费用整理结果_{runDate}.xlsx",
+        "sheets": [
+          "标准费用明细",
+          "重复费用",
+          "超标准",
+          "缺票清单",
+          "待分科目",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "重复费用",
+        "超标准审批",
+        "无票报销",
+        "科目不确定"
+      ],
+      "acceptanceCriteria": [
+        "系统不自动记账或付款",
+        "分类规则来源可见",
+        "重复判断保留相似度和依据"
+      ]
+    },
+    {
+      "id": "FIN-RECONCILIATION-002",
+      "category": "finance",
+      "name": "对账核验",
+      "deliveryWave": 1,
+      "complexity": "very_high",
+      "businessGoal": "匹配银行流水与收付款/发票，输出已匹配、部分匹配、一对多、多对一和未达账项。",
+      "inputRoles": [
+        {
+          "role": "bank_statement",
+          "required": true,
+          "requiredFields": [
+            "transactionId",
+            "date",
+            "amount",
+            "counterparty",
+            "summary"
+          ],
+          "description": "银行流水"
+        },
+        {
+          "role": "ledger",
+          "required": true,
+          "requiredFields": [
+            "documentNo",
+            "date",
+            "amount",
+            "counterparty",
+            "status"
+          ],
+          "description": "应收应付或收付款台账"
+        }
+      ],
+      "companyRuleKeys": [
+        "reconciliation.dateToleranceDays",
+        "reconciliation.amountTolerance",
+        "reconciliation.allowManyToOne",
+        "reconciliation.matchWeights"
+      ],
+      "criticalQuestions": [
+        "日期允许相差几天？",
+        "金额允许相差多少？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "normalizeSignedAmount",
+          "params": {
+            "bankDebitCreditAware": true
+          }
+        },
+        {
+          "op": "exactMatch",
+          "params": {
+            "keys": [
+              "referenceNo",
+              "amount"
+            ]
+          }
+        },
+        {
+          "op": "scoredMatch",
+          "params": {
+            "features": [
+              "amount",
+              "dateDistance",
+              "counterpartySimilarity",
+              "summaryReference"
+            ],
+            "weightsKey": "reconciliation.matchWeights"
+          }
+        },
+        {
+          "op": "subsetMatch",
+          "params": {
+            "enabledKey": "reconciliation.allowManyToOne",
+            "maxGroupSize": 10
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "matchStatus",
+            "rules": [
+              "exact",
+              "high_confidence",
+              "partial",
+              "ambiguous",
+              "unmatched"
+            ]
+          }
+        },
+        {
+          "op": "reconcileControlTotal",
+          "params": {
+            "bankRole": "bank_statement",
+            "ledgerRole": "ledger"
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "matchScore = weighted(amountMatch, dateDistance, counterpartySimilarity, referenceSimilarity)",
+        "bankControlDifference = bankTotal - matchedBankTotal - unmatchedBankTotal"
+      ],
+      "exceptionRules": [
+        "一条流水匹配多个候选",
+        "部分收付款",
+        "金额超容差",
+        "重复银行流水",
+        "期初期末不平",
+        "手续费/汇兑差额"
+      ],
+      "output": {
+        "fileNameTemplate": "银行与账务对账_{period}.xlsx",
+        "sheets": [
+          "匹配结果",
+          "部分匹配",
+          "未匹配银行",
+          "未匹配账务",
+          "歧义候选",
+          "控制汇总",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "低于高置信度阈值的匹配",
+        "任何核销动作",
+        "手续费/汇兑差额",
+        "多对多匹配"
+      ],
+      "acceptanceCriteria": [
+        "系统只生成核销建议不自动入账",
+        "每个匹配有分数和依据",
+        "控制总额必须平衡"
+      ]
+    },
+    {
+      "id": "FIN-ARAP-003",
+      "category": "finance",
+      "name": "应收应付",
+      "deliveryWave": 1,
+      "complexity": "high",
+      "businessGoal": "汇总未结发票和收付款，计算余额、账龄、逾期天数、客户/供应商集中度与催收付款优先级。",
+      "inputRoles": [
+        {
+          "role": "open_items",
+          "required": true,
+          "requiredFields": [
+            "documentNo",
+            "partyCode",
+            "partyName",
+            "documentType",
+            "invoiceDate",
+            "dueDate",
+            "originalAmount",
+            "openAmount"
+          ],
+          "description": "应收应付未结项"
+        },
+        {
+          "role": "payments",
+          "required": false,
+          "requiredFields": [
+            "paymentNo",
+            "partyCode",
+            "date",
+            "amount",
+            "referenceNo"
+          ],
+          "description": "未核销收付款"
+        }
+      ],
+      "companyRuleKeys": [
+        "arap.agingBuckets",
+        "arap.materialityAmount",
+        "arap.customerRiskLevels",
+        "arap.paymentPriorityRule"
+      ],
+      "criticalQuestions": [
+        "账龄区间怎么分？",
+        "大额逾期阈值是多少？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "overdueDays": "max(runDate - dueDate, 0)"
+            }
+          }
+        },
+        {
+          "op": "bucket",
+          "params": {
+            "field": "overdueDays",
+            "bucketsKey": "arap.agingBuckets",
+            "output": "agingBucket"
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "groupBy": [
+              "documentType",
+              "partyCode",
+              "agingBucket"
+            ],
+            "metrics": {
+              "openAmount": "sum",
+              "documentCount": "count"
+            }
+          }
+        },
+        {
+          "op": "score",
+          "params": {
+            "field": "priorityScore",
+            "factors": [
+              "overdueDays",
+              "openAmount",
+              "riskLevel",
+              "disputeFlag"
+            ]
+          }
+        },
+        {
+          "op": "sort",
+          "params": {
+            "by": [
+              "priorityScore desc",
+              "overdueDays desc",
+              "openAmount desc"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "overdueDays = max(runDate - dueDate, 0)",
+        "partyExposure = sum(openAmount by party)",
+        "agingRate = bucketAmount / totalOpenAmount"
+      ],
+      "exceptionRules": [
+        "余额为负但非贷项",
+        "到期日早于开票日",
+        "已付款仍未核销",
+        "大额长期逾期",
+        "客户/供应商编码缺失"
+      ],
+      "output": {
+        "fileNameTemplate": "应收应付账龄_{runDate}.xlsx",
+        "sheets": [
+          "应收账龄",
+          "应付账龄",
+          "催收优先级",
+          "付款优先级",
+          "异常项目",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "坏账判断",
+        "付款决定",
+        "争议款",
+        "异常负余额"
+      ],
+      "acceptanceCriteria": [
+        "应收和应付分开汇总",
+        "账龄区间无重叠遗漏",
+        "优先级只作为建议"
+      ]
+    },
+    {
+      "id": "FIN-INVOICE-OCR-004",
+      "category": "finance",
+      "name": "发票识别",
+      "deliveryWave": 2,
+      "complexity": "very_high",
+      "businessGoal": "从发票图片/PDF或发票登记表提取号码、代码、日期、购销方、金额、税额和价税合计，做格式与重复校验。",
+      "inputRoles": [
+        {
+          "role": "invoice_files",
+          "required": true,
+          "requiredFields": [
+            "filePathOrRow"
+          ],
+          "description": "发票图片/PDF或结构化登记表"
+        },
+        {
+          "role": "purchase_records",
+          "required": false,
+          "requiredFields": [
+            "purchaseNo",
+            "vendorName",
+            "amount",
+            "taxAmount"
+          ],
+          "description": "采购/费用记录"
+        }
+      ],
+      "companyRuleKeys": [
+        "invoice.ocrMode",
+        "invoice.confidenceThreshold",
+        "invoice.duplicateKeys",
+        "invoice.amountTolerance"
+      ],
+      "criticalQuestions": [
+        "识别置信度低于多少转人工？",
+        "是否与采购记录做匹配？"
+      ],
+      "steps": [
+        {
+          "op": "loadInvoiceSource",
+          "params": {
+            "types": [
+              "jpg",
+              "jpeg",
+              "png",
+              "pdf",
+              "xlsx",
+              "csv"
+            ]
+          }
+        },
+        {
+          "op": "ocrExtract",
+          "params": {
+            "adapter": "InvoiceOcrProvider",
+            "localFirst": true
+          }
+        },
+        {
+          "op": "normalizeInvoiceFields",
+          "params": {
+            "fields": [
+              "invoiceCode",
+              "invoiceNo",
+              "invoiceDate",
+              "sellerTaxId",
+              "buyerTaxId",
+              "amount",
+              "taxAmount",
+              "totalAmount"
+            ]
+          }
+        },
+        {
+          "op": "validateArithmetic",
+          "params": {
+            "rule": "amount + taxAmount = totalAmount"
+          }
+        },
+        {
+          "op": "fuzzyDuplicate",
+          "params": {
+            "keys": [
+              "invoiceCode",
+              "invoiceNo",
+              "sellerTaxId",
+              "totalAmount"
+            ]
+          }
+        },
+        {
+          "op": "scoredMatch",
+          "params": {
+            "targetRole": "purchase_records",
+            "features": [
+              "vendorName",
+              "amount",
+              "taxAmount",
+              "date"
+            ]
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "status",
+            "rules": [
+              "duplicate",
+              "low_confidence",
+              "amount_mismatch",
+              "unmatched",
+              "ready"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "arithmeticDifference = totalAmount - amount - taxAmount",
+        "matchScore = vendor+amount+date similarity"
+      ],
+      "exceptionRules": [
+        "OCR 置信度低",
+        "价税不平",
+        "发票号码重复",
+        "关键字段缺失",
+        "与采购记录金额不符"
+      ],
+      "output": {
+        "fileNameTemplate": "发票识别与核对_{runDate}.xlsx",
+        "sheets": [
+          "发票登记表",
+          "重复发票",
+          "低置信度",
+          "采购匹配",
+          "金额异常",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "所有低置信度字段",
+        "重复发票",
+        "税务真伪判断",
+        "任何入账动作"
+      ],
+      "acceptanceCriteria": [
+        "原始发票默认只在本地处理",
+        "OCR 原值、规范值和置信度同时保留",
+        "不把 OCR 结果当作税务真实性结论"
+      ],
+      "specialAdapter": {
+        "name": "InvoiceOcrProvider",
+        "required": true,
+        "firstImplementation": "LocalMockOrManualImport",
+        "note": "先定义接口和人工校对流程，再接本地 OCR"
+      }
+    },
+    {
+      "id": "FIN-OPERATING-SUMMARY-005",
+      "category": "finance",
+      "name": "经营汇总",
+      "deliveryWave": 2,
+      "complexity": "high",
+      "businessGoal": "合并收入、成本、费用、回款和预算，生成利润、毛利率、费用率、现金回收和预算差异汇总。",
+      "inputRoles": [
+        {
+          "role": "revenue",
+          "required": true,
+          "requiredFields": [
+            "date",
+            "businessUnit",
+            "productOrChannel",
+            "revenue"
+          ],
+          "description": "收入"
+        },
+        {
+          "role": "cost",
+          "required": true,
+          "requiredFields": [
+            "date",
+            "businessUnit",
+            "productOrChannel",
+            "cost"
+          ],
+          "description": "成本"
+        },
+        {
+          "role": "expense",
+          "required": true,
+          "requiredFields": [
+            "date",
+            "businessUnit",
+            "expenseType",
+            "amount"
+          ],
+          "description": "费用"
+        },
+        {
+          "role": "cash_collection",
+          "required": false,
+          "requiredFields": [
+            "date",
+            "businessUnit",
+            "amount"
+          ],
+          "description": "回款"
+        },
+        {
+          "role": "budget",
+          "required": false,
+          "requiredFields": [
+            "period",
+            "businessUnit",
+            "metric",
+            "budgetAmount"
+          ],
+          "description": "预算"
+        }
+      ],
+      "companyRuleKeys": [
+        "operating.period",
+        "operating.allocationRules",
+        "operating.materialityRate"
+      ],
+      "criticalQuestions": [
+        "按月还是按周汇总？",
+        "公共费用如何分摊？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "allocate",
+          "params": {
+            "role": "expense",
+            "rulesKey": "operating.allocationRules"
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "groupBy": [
+              "period",
+              "businessUnit",
+              "productOrChannel"
+            ],
+            "metrics": {
+              "revenue": "sum",
+              "cost": "sum",
+              "expense": "sum",
+              "cashCollection": "sum"
+            }
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "grossProfit": "revenue - cost",
+              "grossMargin": "(revenue - cost) / max(revenue, 1)",
+              "operatingProfit": "revenue - cost - expense",
+              "expenseRate": "expense / max(revenue, 1)",
+              "cashCollectionRate": "cashCollection / max(revenue, 1)"
+            }
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "actual_summary",
+              "budget"
+            ],
+            "keys": [
+              "period",
+              "businessUnit",
+              "metric"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "budgetVariance": "actualAmount - budgetAmount",
+              "budgetVarianceRate": "budgetVariance / max(abs(budgetAmount), 1)"
+            }
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "grossProfit = revenue - cost",
+        "operatingProfit = revenue - cost - allocatedExpense",
+        "budgetVariance = actual - budget"
+      ],
+      "exceptionRules": [
+        "收入成本期间不一致",
+        "负收入无冲销说明",
+        "公共费用未分摊",
+        "预算缺失",
+        "重大环比/预算偏差"
+      ],
+      "output": {
+        "fileNameTemplate": "经营汇总_{period}.xlsx",
+        "sheets": [
+          "经营总览",
+          "业务单元",
+          "产品渠道",
+          "预算差异",
+          "重大异常",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "费用分摊规则变更",
+        "重大偏差解释",
+        "收入成本口径不一致"
+      ],
+      "acceptanceCriteria": [
+        "所有指标可从明细复算",
+        "分摊前后费用总额一致",
+        "AI 只解释聚合指标"
+      ]
+    },
+    {
+      "id": "ECOM-ORDER-CLEAN-001",
+      "category": "ecommerce",
+      "name": "订单清洗",
+      "deliveryWave": 1,
+      "complexity": "medium",
+      "businessGoal": "清洗平台订单，按订单号+行项目正确聚合，识别重复单、地址/电话异常、SKU 缺失、金额不平和发货阻塞。",
+      "inputRoles": [
+        {
+          "role": "orders",
+          "required": true,
+          "requiredFields": [
+            "orderNo",
+            "orderTime",
+            "sku",
+            "qty",
+            "itemAmount",
+            "orderAmount",
+            "paymentStatus",
+            "fulfillmentStatus"
+          ],
+          "description": "平台订单导出"
+        },
+        {
+          "role": "sku_master",
+          "required": false,
+          "requiredFields": [
+            "sku",
+            "productName",
+            "status",
+            "weight"
+          ],
+          "description": "SKU 主数据"
+        }
+      ],
+      "companyRuleKeys": [
+        "ecom.orderUniqueRule",
+        "ecom.phoneMasking",
+        "ecom.addressRequiredFields",
+        "ecom.amountTolerance"
+      ],
+      "criticalQuestions": [
+        "重复订单按什么字段判断？",
+        "缺地址是否直接阻塞发货？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "normalizePlatformDialect",
+          "params": {
+            "platforms": [
+              "shopify",
+              "taobao",
+              "tmall",
+              "jd",
+              "douyin",
+              "kuaishou",
+              "generic"
+            ]
+          }
+        },
+        {
+          "op": "deduplicate",
+          "params": {
+            "keys": [
+              "platform",
+              "orderNo",
+              "lineItemId"
+            ],
+            "strategy": "keep_latest_status"
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "orders",
+              "sku_master"
+            ],
+            "keys": [
+              "sku"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "groupBy": [
+              "platform",
+              "orderNo"
+            ],
+            "metrics": {
+              "lineAmountSum": "sum(itemAmount)",
+              "qtySum": "sum(qty)",
+              "lineCount": "count"
+            }
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "amountDifference": "orderAmount - lineAmountSum - shippingAmount + discountAmount"
+            }
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "status",
+            "rules": [
+              "duplicate",
+              "invalid_address",
+              "unknown_sku",
+              "amount_mismatch",
+              "payment_blocked",
+              "ready_to_fulfill"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "orderLineTotal = sum(itemAmount by orderNo)",
+        "amountDifference = orderAmount - itemTotal - shipping + discount"
+      ],
+      "exceptionRules": [
+        "订单行重复",
+        "同订单多行被错误当成多单",
+        "未知 SKU",
+        "收货信息不完整",
+        "支付未完成",
+        "订单金额不平"
+      ],
+      "output": {
+        "fileNameTemplate": "订单清洗结果_{runDate}.xlsx",
+        "sheets": [
+          "可发货订单",
+          "订单行明细",
+          "阻塞订单",
+          "重复订单",
+          "未知SKU",
+          "金额异常",
+          "地址异常",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "地址或电话异常",
+        "金额不平",
+        "支付状态异常",
+        "合单/拆单"
+      ],
+      "acceptanceCriteria": [
+        "订单数按唯一订单号计算而不是按行数",
+        "行项目保留不丢失",
+        "敏感收货信息默认脱敏展示"
+      ]
+    },
+    {
+      "id": "ECOM-REFUND-002",
+      "category": "ecommerce",
+      "name": "退款异常",
+      "deliveryWave": 1,
+      "complexity": "high",
+      "businessGoal": "核对退款申请、订单支付、退货入库和实际退款，识别超额退款、重复退款、无退货退款和退款未到账。",
+      "inputRoles": [
+        {
+          "role": "orders",
+          "required": true,
+          "requiredFields": [
+            "orderNo",
+            "paidAmount",
+            "paymentMethod",
+            "fulfillmentStatus"
+          ],
+          "description": "原订单"
+        },
+        {
+          "role": "refunds",
+          "required": true,
+          "requiredFields": [
+            "refundNo",
+            "orderNo",
+            "refundAmount",
+            "refundTime",
+            "refundStatus",
+            "refundReason"
+          ],
+          "description": "退款记录"
+        },
+        {
+          "role": "returns",
+          "required": false,
+          "requiredFields": [
+            "returnNo",
+            "orderNo",
+            "sku",
+            "returnQty",
+            "restockStatus"
+          ],
+          "description": "退货/入库记录"
+        }
+      ],
+      "companyRuleKeys": [
+        "refund.allowNoReturnReasons",
+        "refund.maxProcessingDays",
+        "refund.amountTolerance",
+        "refund.requireRestock"
+      ],
+      "criticalQuestions": [
+        "哪些原因允许仅退款？",
+        "退款超过几天算超时？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "role": "refunds",
+            "groupBy": [
+              "orderNo"
+            ],
+            "metrics": {
+              "totalRefunded": "sum(refundAmount)",
+              "refundCount": "count"
+            }
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "orders",
+              "refund_summary",
+              "returns"
+            ],
+            "keys": [
+              "orderNo"
+            ],
+            "joinType": "full"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "refundableRemaining": "paidAmount - totalRefunded",
+              "processingDays": "runDate - refundTime"
+            }
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "status",
+            "rules": [
+              "over_refund",
+              "duplicate_refund",
+              "no_return_evidence",
+              "restock_missing",
+              "processing_overdue",
+              "normal"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "totalRefunded = sum(refundAmount by orderNo)",
+        "overRefundAmount = max(totalRefunded - paidAmount, 0)",
+        "processingDays = completedOrRunDate - refundRequestDate"
+      ],
+      "exceptionRules": [
+        "累计退款超过已付金额",
+        "同退款号重复",
+        "退款完成但状态未更新",
+        "需退货但无入库",
+        "已入库但未退款",
+        "退款超时"
+      ],
+      "output": {
+        "fileNameTemplate": "退款异常核对_{runDate}.xlsx",
+        "sheets": [
+          "退款总表",
+          "超额重复退款",
+          "退货未入库",
+          "已入库未退款",
+          "退款超时",
+          "仅退款核对",
+          "状态冲突",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "超额退款",
+        "无退货退款",
+        "退款方式变更",
+        "任何实际退款操作"
+      ],
+      "acceptanceCriteria": [
+        "系统不执行退款，只给出核对结果",
+        "部分退款累计正确",
+        "退款与退货状态分别保留"
+      ]
+    },
+    {
+      "id": "ECOM-PRODUCT-DATA-003",
+      "category": "ecommerce",
+      "name": "商品数据",
+      "deliveryWave": 2,
+      "complexity": "medium",
+      "businessGoal": "整理商品/SKU 数据，识别重复 SKU、缺图缺属性、价格成本异常、库存风险和低动销商品。",
+      "inputRoles": [
+        {
+          "role": "products",
+          "required": true,
+          "requiredFields": [
+            "productId",
+            "sku",
+            "productName",
+            "price",
+            "status"
+          ],
+          "description": "商品/SKU 主数据"
+        },
+        {
+          "role": "inventory",
+          "required": false,
+          "requiredFields": [
+            "sku",
+            "availableQty",
+            "inventoryValue"
+          ],
+          "description": "库存"
+        },
+        {
+          "role": "sales",
+          "required": false,
+          "requiredFields": [
+            "date",
+            "sku",
+            "salesQty",
+            "salesAmount"
+          ],
+          "description": "销售明细"
+        }
+      ],
+      "companyRuleKeys": [
+        "product.requiredAttributes",
+        "product.lowSalesDays",
+        "product.daysOfInventoryThreshold",
+        "product.marginThreshold"
+      ],
+      "criticalQuestions": [
+        "低动销按多少天判断？",
+        "毛利率低于多少预警？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "deduplicate",
+          "params": {
+            "keys": [
+              "sku"
+            ],
+            "strategy": "conflict_to_review"
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "products",
+              "inventory",
+              "sales"
+            ],
+            "keys": [
+              "sku"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "role": "sales",
+            "groupBy": [
+              "sku"
+            ],
+            "metrics": {
+              "salesQty": "sum",
+              "salesAmount": "sum"
+            }
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "sellThroughRate": "salesQty / max(openingInventoryQty + receivedQty, 1)",
+              "daysOfInventory": "availableQty / max(avgDailySalesQty, 0.000001)",
+              "grossMargin": "(price - unitCost) / max(price, 1)"
+            }
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "status",
+            "rules": [
+              "duplicate_sku",
+              "missing_attribute",
+              "negative_margin",
+              "stockout_risk",
+              "overstock",
+              "low_sales",
+              "normal"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "sellThroughRate = unitsSold / unitsAvailableForSale",
+        "daysOfInventory = currentInventory / averageDailySales",
+        "grossMargin = (price - unitCost) / price"
+      ],
+      "exceptionRules": [
+        "SKU 重复",
+        "售价低于成本",
+        "必填属性缺失",
+        "库存为负",
+        "即将缺货",
+        "库存积压",
+        "长期零销量"
+      ],
+      "output": {
+        "fileNameTemplate": "商品数据诊断_{runDate}.xlsx",
+        "sheets": [
+          "商品总表",
+          "重复SKU",
+          "数据缺失",
+          "毛利异常",
+          "缺货风险",
+          "库存积压",
+          "低动销",
+          "数据冲突",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "SKU 合并",
+        "价格调整",
+        "上下架决定",
+        "成本缺失"
+      ],
+      "acceptanceCriteria": [
+        "商品与 SKU 层级不混淆",
+        "库存和销售指标口径固定",
+        "只输出建议不自动改商品"
+      ]
+    },
+    {
+      "id": "ECOM-LIVE-ORDER-004",
+      "category": "ecommerce",
+      "name": "直播订单",
+      "deliveryWave": 1,
+      "complexity": "high",
+      "businessGoal": "清理直播平台订单，按直播场次/主播/商品汇总，识别重复单、未付款、超卖、取消退款和待发货订单。",
+      "inputRoles": [
+        {
+          "role": "live_orders",
+          "required": true,
+          "requiredFields": [
+            "platform",
+            "liveSessionId",
+            "orderNo",
+            "orderTime",
+            "sku",
+            "qty",
+            "paidAmount",
+            "orderStatus"
+          ],
+          "description": "直播订单导出"
+        },
+        {
+          "role": "inventory",
+          "required": false,
+          "requiredFields": [
+            "sku",
+            "availableQty"
+          ],
+          "description": "可售库存"
+        },
+        {
+          "role": "live_plan",
+          "required": false,
+          "requiredFields": [
+            "liveSessionId",
+            "host",
+            "startTime",
+            "endTime"
+          ],
+          "description": "直播场次"
+        }
+      ],
+      "companyRuleKeys": [
+        "live.orderStatusMap",
+        "live.oversellPolicy",
+        "live.cancelWindowMinutes",
+        "live.sessionMatchRule"
+      ],
+      "criticalQuestions": [
+        "超卖订单按什么优先级保留？",
+        "未付款多久自动列为失效？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "normalizePlatformDialect",
+          "params": {
+            "platforms": [
+              "douyin",
+              "kuaishou",
+              "taobao_live",
+              "generic"
+            ]
+          }
+        },
+        {
+          "op": "deduplicate",
+          "params": {
+            "keys": [
+              "platform",
+              "orderNo",
+              "lineItemId"
+            ],
+            "strategy": "keep_latest_status"
+          }
+        },
+        {
+          "op": "assignSession",
+          "params": {
+            "by": [
+              "liveSessionId",
+              "orderTimeBetweenSession"
+            ]
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "groupBy": [
+              "liveSessionId",
+              "sku"
+            ],
+            "metrics": {
+              "paidQty": "sum(qty where paid)",
+              "paidAmount": "sum(paidAmount)",
+              "orderCount": "countDistinct(orderNo)"
+            }
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "session_sku_summary",
+              "inventory"
+            ],
+            "keys": [
+              "sku"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "oversellQty": "max(paidQty - availableQty, 0)"
+            }
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "status",
+            "rules": [
+              "duplicate",
+              "unpaid_expired",
+              "oversold",
+              "cancelled_refunded",
+              "ready_to_fulfill"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "orderCount = countDistinct(orderNo)",
+        "oversellQty = max(paidQty - availableQty, 0)",
+        "sessionConversion requires visitor data when available"
+      ],
+      "exceptionRules": [
+        "同订单重复导出",
+        "订单无法匹配场次",
+        "超卖",
+        "未付款超时",
+        "取消但未退款",
+        "退款但仍待发货"
+      ],
+      "output": {
+        "fileNameTemplate": "直播订单处理_{runDate}.xlsx",
+        "sheets": [
+          "待发货订单",
+          "直播场次汇总",
+          "商品汇总",
+          "超卖订单",
+          "超时未付",
+          "异常订单",
+          "状态冲突",
+          "合并候选",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "超卖分配",
+        "订单状态冲突",
+        "合并发货",
+        "取消/退款异常"
+      ],
+      "acceptanceCriteria": [
+        "订单数不按商品行重复计算",
+        "每单保留最终状态和状态轨迹",
+        "超卖不会自动取消订单"
+      ]
+    },
+    {
+      "id": "ECOM-SALES-SUMMARY-005",
+      "category": "ecommerce",
+      "name": "销售汇总",
+      "deliveryWave": 2,
+      "complexity": "medium",
+      "businessGoal": "按平台、店铺、渠道、商品和日期汇总销售额、退款、净销售、客单价、件单价、毛利和趋势。",
+      "inputRoles": [
+        {
+          "role": "sales_orders",
+          "required": true,
+          "requiredFields": [
+            "orderNo",
+            "date",
+            "platform",
+            "shop",
+            "sku",
+            "qty",
+            "grossSales",
+            "discount",
+            "shipping",
+            "tax"
+          ],
+          "description": "销售订单"
+        },
+        {
+          "role": "refunds",
+          "required": false,
+          "requiredFields": [
+            "orderNo",
+            "refundAmount",
+            "refundDate"
+          ],
+          "description": "退款"
+        },
+        {
+          "role": "product_cost",
+          "required": false,
+          "requiredFields": [
+            "sku",
+            "unitCost"
+          ],
+          "description": "商品成本"
+        }
+      ],
+      "companyRuleKeys": [
+        "sales.period",
+        "sales.revenueRecognitionRule",
+        "sales.refundAttributionRule",
+        "sales.orderCountRule"
+      ],
+      "criticalQuestions": [
+        "退款归属原销售日还是退款日？",
+        "订单数按付款单还是完成单？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "deduplicate",
+          "params": {
+            "keys": [
+              "platform",
+              "orderNo",
+              "lineItemId"
+            ],
+            "strategy": "keep_latest"
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "sales_orders",
+              "refunds",
+              "product_cost"
+            ],
+            "keys": [
+              "orderNo",
+              "sku"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "netSales": "grossSales - discount - refundAmount",
+              "grossProfit": "netSales - qty * unitCost"
+            }
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "groupBy": [
+              "period",
+              "platform",
+              "shop",
+              "sku"
+            ],
+            "metrics": {
+              "netSales": "sum",
+              "qty": "sum",
+              "orderCount": "countDistinct(orderNo)",
+              "grossProfit": "sum"
+            }
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "averageOrderValue": "netSales / max(orderCount, 1)",
+              "grossMargin": "grossProfit / max(netSales, 1)",
+              "refundRate": "refundAmount / max(grossSales, 1)"
+            }
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "netSales = grossSales - discounts - refunds",
+        "averageOrderValue = netSales / distinctPaidOrders",
+        "grossMargin = (netSales - productCost) / netSales"
+      ],
+      "exceptionRules": [
+        "订单重复",
+        "退款归属规则缺失",
+        "成本缺失",
+        "净销售为负",
+        "销售额与平台汇总不一致"
+      ],
+      "output": {
+        "fileNameTemplate": "电商销售汇总_{period}.xlsx",
+        "sheets": [
+          "销售总览",
+          "平台汇总",
+          "商品排行",
+          "渠道汇总",
+          "退款分析",
+          "毛利分析",
+          "趋势",
+          "数据异常",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "收入确认口径变更",
+        "成本缺失",
+        "异常负销售",
+        "重大平台差异"
+      ],
+      "acceptanceCriteria": [
+        "订单数使用 distinct orderNo",
+        "同一套退款口径贯穿全部报表",
+        "汇总可追溯至订单行"
+      ]
+    },
+    {
+      "id": "ADMIN-ASSET-INVENTORY-001",
+      "category": "admin",
+      "name": "资产盘点",
+      "deliveryWave": 1,
+      "complexity": "medium",
+      "businessGoal": "比对资产台账和实盘，识别盘盈盘亏、位置/责任人不符、闲置、损坏和即将到期维保资产。",
+      "inputRoles": [
+        {
+          "role": "asset_register",
+          "required": true,
+          "requiredFields": [
+            "assetCode",
+            "assetName",
+            "category",
+            "department",
+            "custodian",
+            "location",
+            "status"
+          ],
+          "description": "资产台账"
+        },
+        {
+          "role": "physical_count",
+          "required": true,
+          "requiredFields": [
+            "assetCode",
+            "actualLocation",
+            "actualCustodian",
+            "actualStatus",
+            "countDate"
+          ],
+          "description": "实盘结果"
+        },
+        {
+          "role": "maintenance",
+          "required": false,
+          "requiredFields": [
+            "assetCode",
+            "warrantyEndDate",
+            "nextMaintenanceDate"
+          ],
+          "description": "维保信息"
+        }
+      ],
+      "companyRuleKeys": [
+        "asset.matchRule",
+        "asset.idleDays",
+        "asset.expiryWarningDays",
+        "asset.allowedStatuses"
+      ],
+      "criticalQuestions": [
+        "资产以编号还是二维码为唯一键？",
+        "维保到期前多少天提醒？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "asset_register",
+              "physical_count",
+              "maintenance"
+            ],
+            "keys": [
+              "assetCode"
+            ],
+            "joinType": "full"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "warrantyDaysLeft": "warrantyEndDate - runDate",
+              "maintenanceDaysLeft": "nextMaintenanceDate - runDate"
+            }
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "status",
+            "rules": [
+              "missing_asset",
+              "unregistered_asset",
+              "location_mismatch",
+              "custodian_mismatch",
+              "damaged",
+              "maintenance_due",
+              "matched"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "inventoryDifferenceCount = registerCount - physicalCount",
+        "daysToMaintenance = nextMaintenanceDate - runDate"
+      ],
+      "exceptionRules": [
+        "台账有但未盘到",
+        "实盘有但未登记",
+        "位置不符",
+        "责任人不符",
+        "资产状态冲突",
+        "维保到期"
+      ],
+      "output": {
+        "fileNameTemplate": "资产盘点结果_{runDate}.xlsx",
+        "sheets": [
+          "盘点总表",
+          "盘亏",
+          "盘盈",
+          "位置责任人异常",
+          "损坏闲置",
+          "维保提醒",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "资产报废",
+        "责任人变更",
+        "盘盈盘亏确认",
+        "敏感资产位置"
+      ],
+      "acceptanceCriteria": [
+        "不自动修改资产台账",
+        "每项差异有台账值和实盘值",
+        "资产编号唯一"
+      ]
+    },
+    {
+      "id": "ADMIN-EXPENSE-ANALYSIS-002",
+      "category": "admin",
+      "name": "费用分析",
+      "deliveryWave": 2,
+      "complexity": "medium",
+      "businessGoal": "按部门、类别、供应商和期间汇总行政费用，计算预算差异、环比、单人费用和异常增长。",
+      "inputRoles": [
+        {
+          "role": "admin_expense",
+          "required": true,
+          "requiredFields": [
+            "date",
+            "department",
+            "expenseType",
+            "vendor",
+            "amount"
+          ],
+          "description": "行政费用"
+        },
+        {
+          "role": "budget",
+          "required": false,
+          "requiredFields": [
+            "period",
+            "department",
+            "expenseType",
+            "budgetAmount"
+          ],
+          "description": "预算"
+        },
+        {
+          "role": "headcount",
+          "required": false,
+          "requiredFields": [
+            "period",
+            "department",
+            "headcount"
+          ],
+          "description": "人数"
+        }
+      ],
+      "companyRuleKeys": [
+        "adminExpense.period",
+        "adminExpense.materialityRate",
+        "adminExpense.perCapitaMetrics"
+      ],
+      "criticalQuestions": [
+        "按月还是按季度分析？",
+        "增长超过多少算异常？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "groupBy": [
+              "period",
+              "department",
+              "expenseType",
+              "vendor"
+            ],
+            "metrics": {
+              "amount": "sum"
+            }
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "expense_summary",
+              "budget",
+              "headcount"
+            ],
+            "keys": [
+              "period",
+              "department"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "budgetVariance": "amount - budgetAmount",
+              "budgetVarianceRate": "budgetVariance / max(abs(budgetAmount), 1)",
+              "perCapitaExpense": "amount / max(headcount, 1)",
+              "monthOverMonthRate": "(amount - previousAmount) / max(abs(previousAmount), 1)"
+            }
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "status",
+            "rules": [
+              "over_budget",
+              "abnormal_growth",
+              "vendor_concentration",
+              "normal"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "budgetVariance = actual - budget",
+        "perCapitaExpense = expense / headcount",
+        "vendorConcentration = topVendorExpense / totalExpense"
+      ],
+      "exceptionRules": [
+        "预算缺失",
+        "部门人数缺失",
+        "费用环比异常",
+        "单一供应商集中度过高",
+        "负数费用无冲销说明"
+      ],
+      "output": {
+        "fileNameTemplate": "行政费用分析_{period}.xlsx",
+        "sheets": [
+          "费用总览",
+          "部门分析",
+          "类别分析",
+          "供应商分析",
+          "预算差异",
+          "异常增长",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "预算调整",
+        "供应商异常",
+        "重大费用增长"
+      ],
+      "acceptanceCriteria": [
+        "费用总额在各维度汇总一致",
+        "预算差异和环比口径固定",
+        "异常只提示不自动处置"
+      ]
+    },
+    {
+      "id": "ADMIN-ROOM-UTILIZATION-003",
+      "category": "admin",
+      "name": "会议室利用率",
+      "deliveryWave": 2,
+      "complexity": "medium",
+      "businessGoal": "根据会议室日历/预约记录计算可用时长、已预订时长、实际使用时长、取消率、爽约率和高峰时段。",
+      "inputRoles": [
+        {
+          "role": "room_master",
+          "required": true,
+          "requiredFields": [
+            "roomId",
+            "roomName",
+            "capacity",
+            "availableStart",
+            "availableEnd"
+          ],
+          "description": "会议室主数据"
+        },
+        {
+          "role": "bookings",
+          "required": true,
+          "requiredFields": [
+            "roomId",
+            "eventId",
+            "startTime",
+            "endTime",
+            "status",
+            "attendeeCount"
+          ],
+          "description": "日历或预约记录"
+        },
+        {
+          "role": "checkin",
+          "required": false,
+          "requiredFields": [
+            "eventId",
+            "checkinTime",
+            "checkoutTime"
+          ],
+          "description": "门禁/签到"
+        }
+      ],
+      "companyRuleKeys": [
+        "room.workingDays",
+        "room.minimumBookingMinutes",
+        "room.noShowGraceMinutes",
+        "room.useCheckinAsActual"
+      ],
+      "criticalQuestions": [
+        "利用率按预订还是实际签到？",
+        "迟到多少分钟算爽约？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "expandAvailability",
+          "params": {
+            "role": "room_master",
+            "calendar": "company_work_calendar"
+          }
+        },
+        {
+          "op": "normalizeIntervals",
+          "params": {
+            "role": "bookings",
+            "clipToAvailability": true
+          }
+        },
+        {
+          "op": "mergeOverlappingIntervals",
+          "params": {
+            "groupBy": [
+              "roomId"
+            ],
+            "preventDoubleCount": true
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "bookings",
+              "checkin"
+            ],
+            "keys": [
+              "eventId"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "bookedMinutes": "endTime - startTime",
+              "actualMinutes": "checkoutTime - checkinTime",
+              "utilizationRate": "usedMinutes / max(availableMinutes, 1)"
+            }
+          }
+        },
+        {
+          "op": "aggregate",
+          "params": {
+            "groupBy": [
+              "roomId",
+              "date",
+              "hourBucket"
+            ],
+            "metrics": {
+              "availableMinutes": "sum",
+              "bookedMinutes": "sum",
+              "usedMinutes": "sum",
+              "cancelledCount": "count",
+              "noShowCount": "count"
+            }
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "utilizationRate = usedOrBookedMinutes / availableMinutes",
+        "noShowRate = noShowCount / confirmedBookingCount"
+      ],
+      "exceptionRules": [
+        "预约时间重叠",
+        "结束早于开始",
+        "超出开放时间",
+        "预订但未签到",
+        "小会议占用大会议室",
+        "利用率超过 100%"
+      ],
+      "output": {
+        "fileNameTemplate": "会议室利用率_{period}.xlsx",
+        "sheets": [
+          "会议室总览",
+          "每日利用率",
+          "高峰时段",
+          "取消爽约",
+          "容量匹配",
+          "数据异常",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "重复预约",
+        "利用率超过100%",
+        "签到数据缺失时的口径选择"
+      ],
+      "acceptanceCriteria": [
+        "重叠时段不重复计算",
+        "可用时长扣除节假日和关闭时段",
+        "预订利用率与实际利用率分开"
+      ],
+      "specialAdapter": {
+        "name": "CalendarImportAdapter",
+        "required": false,
+        "firstImplementation": "CSV/ICS import",
+        "note": "后续可接 Microsoft Graph calendarView"
+      }
+    },
+    {
+      "id": "ADMIN-CONTRACT-EXPIRY-004",
+      "category": "admin",
+      "name": "合同到期",
+      "deliveryWave": 1,
+      "complexity": "medium",
+      "businessGoal": "整理合同台账，识别即将到期、已过期、自动续约、付款节点、保证金和责任人缺失。",
+      "inputRoles": [
+        {
+          "role": "contracts",
+          "required": true,
+          "requiredFields": [
+            "contractNo",
+            "contractName",
+            "counterparty",
+            "startDate",
+            "endDate",
+            "owner",
+            "amount",
+            "status"
+          ],
+          "description": "合同台账"
+        },
+        {
+          "role": "milestones",
+          "required": false,
+          "requiredFields": [
+            "contractNo",
+            "milestoneName",
+            "dueDate",
+            "amount",
+            "status"
+          ],
+          "description": "付款/交付节点"
+        }
+      ],
+      "companyRuleKeys": [
+        "contract.warningDays",
+        "contract.autoRenewNoticeDays",
+        "contract.materialAmount",
+        "contract.requiredFields"
+      ],
+      "criticalQuestions": [
+        "到期前多少天提醒？",
+        "自动续约合同提前多少天处理？"
+      ],
+      "steps": [
+        {
+          "op": "loadWorkbook",
+          "params": {
+            "allowedTypes": [
+              "xlsx",
+              "xls",
+              "csv"
+            ],
+            "multiSheet": true
+          }
+        },
+        {
+          "op": "detectHeader",
+          "params": {
+            "scanRows": 30
+          }
+        },
+        {
+          "op": "normalizeColumns",
+          "params": {
+            "useAliases": true,
+            "trim": true
+          }
+        },
+        {
+          "op": "inferTypes",
+          "params": {
+            "types": [
+              "string",
+              "decimal",
+              "integer",
+              "date",
+              "datetime",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "op": "validateRequiredFields",
+          "params": {
+            "onMissing": "ask_at_most_2_or_block"
+          }
+        },
+        {
+          "op": "join",
+          "params": {
+            "roles": [
+              "contracts",
+              "milestones"
+            ],
+            "keys": [
+              "contractNo"
+            ],
+            "joinType": "left"
+          }
+        },
+        {
+          "op": "derive",
+          "params": {
+            "fields": {
+              "daysToExpiry": "endDate - runDate",
+              "daysToMilestone": "dueDate - runDate"
+            }
+          }
+        },
+        {
+          "op": "classify",
+          "params": {
+            "field": "status",
+            "rules": [
+              "expired",
+              "auto_renew_action_due",
+              "expiring_soon",
+              "milestone_overdue",
+              "missing_owner",
+              "active"
+            ]
+          }
+        },
+        {
+          "op": "sort",
+          "params": {
+            "by": [
+              "status",
+              "daysToExpiry asc",
+              "amount desc"
+            ]
+          }
+        },
+        {
+          "op": "buildSourceTrace",
+          "params": {
+            "includeSourceFile": true,
+            "includeSourceRow": true
+          }
+        },
+        {
+          "op": "exportWorkbook",
+          "params": {
+            "format": "xlsx",
+            "freezeHeader": true,
+            "autoFilter": true
+          }
+        },
+        {
+          "op": "buildAiSummaryPayload",
+          "params": {
+            "rawRows": false,
+            "maxExceptionSamples": 20
+          }
+        }
+      ],
+      "calculations": [
+        "daysToExpiry = endDate - runDate",
+        "daysToMilestone = milestoneDueDate - runDate"
+      ],
+      "exceptionRules": [
+        "结束日期早于开始日期",
+        "已过期仍标记有效",
+        "自动续约但通知期临近",
+        "责任人缺失",
+        "大额合同到期",
+        "付款节点逾期"
+      ],
+      "output": {
+        "fileNameTemplate": "合同到期提醒_{runDate}.xlsx",
+        "sheets": [
+          "合同总表",
+          "即将到期",
+          "已过期",
+          "自动续约",
+          "节点逾期",
+          "资料缺失",
+          "运行说明"
+        ],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": [
+        "续签或终止决定",
+        "自动续约",
+        "大额合同",
+        "责任人缺失"
+      ],
+      "acceptanceCriteria": [
+        "系统只提醒不自动续约或终止",
+        "提醒阈值配置化",
+        "合同与节点分别追踪"
+      ]
+    },
+    {
+      "id": "LOG-INVENTORY-COUNT-001",
+      "category": "logistics",
+      "name": "库存盘点",
+      "deliveryWave": 1,
+      "complexity": "medium",
+      "businessGoal": "比对账面库存与实盘数量，输出盘盈盘亏与差异明细，不自动改库存。",
+      "inputRoles": [
+        {
+          "role": "stock_ledger",
+          "required": true,
+          "requiredFields": ["sku", "warehouse", "onHand", "asOfDate"],
+          "description": "账面库存"
+        },
+        {
+          "role": "physical_count",
+          "required": true,
+          "requiredFields": ["sku", "warehouse", "countedQty", "countDate"],
+          "description": "实盘结果"
+        },
+        {
+          "role": "warehouse_master",
+          "required": false,
+          "requiredFields": ["warehouse"],
+          "description": "仓库主数据"
+        }
+      ],
+      "companyRuleKeys": ["log.inventory.matchRule", "log.inventory.qtyTolerance"],
+      "criticalQuestions": ["盘点按 SKU+仓库 匹配吗？", "数量容差是多少？"],
+      "steps": [
+        { "op": "loadWorkbook", "params": { "allowedTypes": ["xlsx", "xls", "csv"], "multiSheet": true } },
+        { "op": "detectHeader", "params": { "scanRows": 30 } },
+        { "op": "normalizeColumns", "params": { "useAliases": true, "trim": true } },
+        { "op": "inferTypes", "params": { "types": ["string", "decimal", "integer", "date"] } },
+        { "op": "validateRequiredFields", "params": { "onMissing": "ask_at_most_2_or_block" } },
+        { "op": "join", "params": { "roles": ["stock_ledger", "physical_count"], "keys": ["sku", "warehouse"], "joinType": "full" } },
+        { "op": "derive", "params": { "fields": { "qtyDifference": "countedQty - onHand" } } },
+        { "op": "classify", "params": { "field": "status", "rules": ["shortage", "overage", "matched", "invalid"] } },
+        { "op": "buildSourceTrace", "params": { "includeSourceFile": true, "includeSourceRow": true } },
+        { "op": "exportWorkbook", "params": { "format": "xlsx", "freezeHeader": true, "autoFilter": true } },
+        { "op": "buildAiSummaryPayload", "params": { "rawRows": false, "maxExceptionSamples": 20 } }
+      ],
+      "calculations": ["qtyDifference = countedQty - onHand"],
+      "exceptionRules": ["盘亏", "盘盈", "缺少账面或实盘", "字段无效"],
+      "output": {
+        "fileNameTemplate": "库存盘点结果_{runDate}.xlsx",
+        "sheets": ["盘点总表", "盘亏", "盘盈", "差异明细", "运行说明"],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": ["盘盈盘亏确认", "容差外差异"],
+      "acceptanceCriteria": ["不自动改库存", "差异可追溯到账面与实盘"]
+    },
+    {
+      "id": "LOG-INOUT-RECONCILE-002",
+      "category": "logistics",
+      "name": "出入库核对",
+      "deliveryWave": 1,
+      "complexity": "medium",
+      "businessGoal": "核对入库与出库单据数量/日期，识别未匹配与异常，不自动过账。",
+      "inputRoles": [
+        {
+          "role": "inbound",
+          "required": true,
+          "requiredFields": ["docNo", "sku", "warehouse", "qty", "moveDate"],
+          "description": "入库明细"
+        },
+        {
+          "role": "outbound",
+          "required": true,
+          "requiredFields": ["docNo", "sku", "warehouse", "qty", "moveDate"],
+          "description": "出库明细"
+        },
+        {
+          "role": "stock_snapshot",
+          "required": false,
+          "requiredFields": ["sku", "warehouse", "onHand"],
+          "description": "库存快照"
+        }
+      ],
+      "companyRuleKeys": ["log.inout.qtyTolerance", "log.inout.dateToleranceDays"],
+      "criticalQuestions": ["出入库关联键是什么？", "日期容差几天？"],
+      "steps": [
+        { "op": "loadWorkbook", "params": { "allowedTypes": ["xlsx", "xls", "csv"], "multiSheet": true } },
+        { "op": "detectHeader", "params": { "scanRows": 30 } },
+        { "op": "normalizeColumns", "params": { "useAliases": true, "trim": true } },
+        { "op": "inferTypes", "params": { "types": ["string", "decimal", "integer", "date"] } },
+        { "op": "validateRequiredFields", "params": { "onMissing": "ask_at_most_2_or_block" } },
+        { "op": "join", "params": { "roles": ["inbound", "outbound"], "keys": ["sku", "warehouse", "docNo"], "joinType": "full" } },
+        { "op": "classify", "params": { "field": "status", "rules": ["qty_mismatch", "date_mismatch", "unmatched", "matched"] } },
+        { "op": "buildSourceTrace", "params": { "includeSourceFile": true, "includeSourceRow": true } },
+        { "op": "exportWorkbook", "params": { "format": "xlsx", "freezeHeader": true, "autoFilter": true } },
+        { "op": "buildAiSummaryPayload", "params": { "rawRows": false, "maxExceptionSamples": 20 } }
+      ],
+      "calculations": ["qtyDifference = inboundQty - outboundQty", "dateDiffDays = abs(inDate - outDate)"],
+      "exceptionRules": ["数量不符", "日期超容差", "单边未匹配"],
+      "output": {
+        "fileNameTemplate": "出入库核对_{runDate}.xlsx",
+        "sheets": ["核对总表", "入库异常", "出库异常", "未匹配", "运行说明"],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": ["未匹配单据", "数量日期异常"],
+      "acceptanceCriteria": ["不自动改库存", "本地核对不上传云端"]
+    },
+    {
+      "id": "LOG-SHIPMENT-TRACK-003",
+      "category": "logistics",
+      "name": "运单追踪",
+      "deliveryWave": 1,
+      "complexity": "medium",
+      "businessGoal": "识别延误、异常与在途运单，仅输出追踪报告，不自动取消运单。",
+      "inputRoles": [
+        {
+          "role": "shipments",
+          "required": true,
+          "requiredFields": ["trackingNo", "carrier", "shipDate", "status", "eta"],
+          "description": "运单列表"
+        },
+        {
+          "role": "tracking_events",
+          "required": false,
+          "requiredFields": ["trackingNo", "eventTime"],
+          "description": "轨迹节点"
+        }
+      ],
+      "companyRuleKeys": ["log.track.delayHours", "log.track.staleHours"],
+      "criticalQuestions": ["延误多少小时算超时？", "多久无轨迹算停滞？"],
+      "steps": [
+        { "op": "loadWorkbook", "params": { "allowedTypes": ["xlsx", "xls", "csv"], "multiSheet": true } },
+        { "op": "detectHeader", "params": { "scanRows": 30 } },
+        { "op": "normalizeColumns", "params": { "useAliases": true, "trim": true } },
+        { "op": "inferTypes", "params": { "types": ["string", "decimal", "integer", "date", "datetime"] } },
+        { "op": "validateRequiredFields", "params": { "onMissing": "ask_at_most_2_or_block" } },
+        { "op": "join", "params": { "roles": ["shipments", "tracking_events"], "keys": ["trackingNo"], "joinType": "left" } },
+        { "op": "classify", "params": { "field": "bucket", "rules": ["delayed", "exception", "in_transit", "delivered"] } },
+        { "op": "buildSourceTrace", "params": { "includeSourceFile": true, "includeSourceRow": true } },
+        { "op": "exportWorkbook", "params": { "format": "xlsx", "freezeHeader": true, "autoFilter": true } },
+        { "op": "buildAiSummaryPayload", "params": { "rawRows": false, "maxExceptionSamples": 20 } }
+      ],
+      "calculations": ["hoursLate = now - eta", "hoursSinceLastEvent = now - lastEventTime"],
+      "exceptionRules": ["延误", "异常状态", "轨迹停滞"],
+      "output": {
+        "fileNameTemplate": "运单追踪_{runDate}.xlsx",
+        "sheets": ["运单总表", "延误", "异常", "在途", "运行说明"],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": ["延误运单", "异常运单"],
+      "acceptanceCriteria": ["不自动取消运单", "不自动发货"]
+    },
+    {
+      "id": "LOG-STOCK-ALERT-004",
+      "category": "logistics",
+      "name": "库存预警",
+      "deliveryWave": 1,
+      "complexity": "low",
+      "businessGoal": "按安全库存与动销识别低库存与积压，仅预警不自动补货或改库存。",
+      "inputRoles": [
+        {
+          "role": "inventory",
+          "required": true,
+          "requiredFields": ["sku", "warehouse", "onHand", "safetyStock"],
+          "description": "库存现状"
+        },
+        {
+          "role": "sales_velocity",
+          "required": false,
+          "requiredFields": ["sku", "avgDailySales"],
+          "description": "销售速度"
+        }
+      ],
+      "companyRuleKeys": ["log.alert.lowStockDays", "log.alert.overstockDays"],
+      "criticalQuestions": ["低库存天数阈值？", "积压天数阈值？"],
+      "steps": [
+        { "op": "loadWorkbook", "params": { "allowedTypes": ["xlsx", "xls", "csv"], "multiSheet": true } },
+        { "op": "detectHeader", "params": { "scanRows": 30 } },
+        { "op": "normalizeColumns", "params": { "useAliases": true, "trim": true } },
+        { "op": "inferTypes", "params": { "types": ["string", "decimal", "integer"] } },
+        { "op": "validateRequiredFields", "params": { "onMissing": "ask_at_most_2_or_block" } },
+        { "op": "join", "params": { "roles": ["inventory", "sales_velocity"], "keys": ["sku"], "joinType": "left" } },
+        { "op": "derive", "params": { "fields": { "daysOfInventory": "onHand / avgDailySales" } } },
+        { "op": "classify", "params": { "field": "alert", "rules": ["low_stock", "overstock", "ok"] } },
+        { "op": "buildSourceTrace", "params": { "includeSourceFile": true, "includeSourceRow": true } },
+        { "op": "exportWorkbook", "params": { "format": "xlsx", "freezeHeader": true, "autoFilter": true } },
+        { "op": "buildAiSummaryPayload", "params": { "rawRows": false, "maxExceptionSamples": 20 } }
+      ],
+      "calculations": ["daysOfInventory = onHand / avgDailySales"],
+      "exceptionRules": ["低于安全库存", "可售天数过低", "库存积压"],
+      "output": {
+        "fileNameTemplate": "库存预警_{runDate}.xlsx",
+        "sheets": ["预警总表", "低库存", "积压", "运行说明"],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": ["低库存补货建议", "积压处理"],
+      "acceptanceCriteria": ["不自动改库存", "不自动补货下单"]
+    },
+    {
+      "id": "LOG-TRANSFER-CLEAN-005",
+      "category": "logistics",
+      "name": "调拨整理",
+      "deliveryWave": 1,
+      "complexity": "medium",
+      "businessGoal": "整理在途超时、数量异常与待收货调拨单，不自动完成调拨。",
+      "inputRoles": [
+        {
+          "role": "transfers",
+          "required": true,
+          "requiredFields": ["transferNo", "fromWarehouse", "toWarehouse", "sku", "qty", "status", "shipDate"],
+          "description": "调拨单"
+        },
+        {
+          "role": "warehouses",
+          "required": false,
+          "requiredFields": ["warehouse"],
+          "description": "仓库主数据"
+        }
+      ],
+      "companyRuleKeys": ["log.transfer.inTransitDays", "log.transfer.qtyTolerance"],
+      "criticalQuestions": ["在途超时几天？", "收发数量容差？"],
+      "steps": [
+        { "op": "loadWorkbook", "params": { "allowedTypes": ["xlsx", "xls", "csv"], "multiSheet": true } },
+        { "op": "detectHeader", "params": { "scanRows": 30 } },
+        { "op": "normalizeColumns", "params": { "useAliases": true, "trim": true } },
+        { "op": "inferTypes", "params": { "types": ["string", "decimal", "integer", "date"] } },
+        { "op": "validateRequiredFields", "params": { "onMissing": "ask_at_most_2_or_block" } },
+        { "op": "join", "params": { "roles": ["transfers", "warehouses"], "keys": ["warehouse"], "joinType": "left" } },
+        { "op": "classify", "params": { "field": "bucket", "rules": ["in_transit_timeout", "qty_exception", "pending_receive", "ok"] } },
+        { "op": "buildSourceTrace", "params": { "includeSourceFile": true, "includeSourceRow": true } },
+        { "op": "exportWorkbook", "params": { "format": "xlsx", "freezeHeader": true, "autoFilter": true } },
+        { "op": "buildAiSummaryPayload", "params": { "rawRows": false, "maxExceptionSamples": 20 } }
+      ],
+      "calculations": ["daysInTransit = runDate - shipDate", "qtyDifference = receivedQty - qty"],
+      "exceptionRules": ["在途超时", "数量异常", "待收货", "未知仓库"],
+      "output": {
+        "fileNameTemplate": "调拨整理_{runDate}.xlsx",
+        "sheets": ["调拨总表", "在途超时", "数量异常", "待收货", "运行说明"],
+        "alwaysGenerateSourceTrace": true,
+        "alwaysGenerateRunSummary": true
+      },
+      "manualReviewTriggers": ["超时调拨", "收发差异确认"],
+      "acceptanceCriteria": ["不自动完成调拨", "不自动改库存"]
+    }
+  ]
+}

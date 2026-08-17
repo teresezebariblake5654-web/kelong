@@ -4,8 +4,8 @@ import { parseUserMessageForDisplay } from './userMessageDisplay';
 
 // ─── Helpers ────────────────────────────────────────────────
 
-const WIN_INBOUND = String.raw`C:\Users\zhangsan\AppData\Roaming\LobsterAI\openclaw\state\media\inbound`;
-const MAC_INBOUND = '/Users/zhangsan/Library/Application Support/LobsterAI/openclaw/state/media/inbound';
+const WIN_INBOUND = String.raw`C:\Users\zhangsan\AppData\Roaming\火星 AI\openclaw\state\media\inbound`;
+const MAC_INBOUND = '/Users/zhangsan/Library/Application Support/火星 AI/openclaw/state/media/inbound';
 
 const fileImg = (dir: string, name: string) => `${dir}${dir.includes('\\') ? '\\' : '/'}${name}`;
 
@@ -44,9 +44,22 @@ describe('passthrough (no transformation)', () => {
   });
 });
 
-// ─── LobsterAI goal mode ────────────────────────────────────
+// ─── 火星 AI outbound envelope ────────────────────────────
 
-describe('LobsterAI goal mode command display', () => {
+describe('火星 AI system envelope display', () => {
+  test('strips 火星 AI system instructions and keeps user request', () => {
+    const input = `[火星 AI system instructions]
+hidden setup
+
+[Current user request]
+帮我整理考勤`;
+    expect(parseUserMessageForDisplay(input)).toBe('帮我整理考勤');
+  });
+});
+
+// ─── 火星 AI goal mode ────────────────────────────────────
+
+describe('火星 AI goal mode command display', () => {
   test('strips /goal start prefix from displayed user text', () => {
     const input = '/goal start 帮我做一个烘焙工作室的展示网页';
     expect(parseUserMessageForDisplay(input)).toBe('帮我做一个烘焙工作室的展示网页');

@@ -1,5 +1,6 @@
 import React from 'react';
 import { i18nService } from '@/services/i18n';
+import { isYoudaoCloudEnabled } from '../../shared/featureFlags';
 
 const PRIVACY_URL = 'https://c.youdao.com/dict/hardware/lobsterai/lobsterai_service.html';
 
@@ -9,8 +10,10 @@ interface PrivacyDialogProps {
 }
 
 const PrivacyDialog: React.FC<PrivacyDialogProps> = ({ onAccept, onReject }) => {
+  const youdaoCloud = isYoudaoCloudEnabled();
   const handleLinkClick = async (e: React.MouseEvent) => {
     e.preventDefault();
+    if (!youdaoCloud || !PRIVACY_URL) return;
     await window.electron.shell.openExternal(PRIVACY_URL);
   };
 
@@ -28,34 +31,40 @@ const PrivacyDialog: React.FC<PrivacyDialogProps> = ({ onAccept, onReject }) => 
           </h2>
         </div>
 
-        {/* Content */}
+        {/* Body */}
         <div className="px-6 py-4">
-          <p className="text-sm text-secondary text-center leading-relaxed">
+          <p className="text-sm text-secondary leading-relaxed text-center">
             {parts[0]}
-            <a
-              href={PRIVACY_URL}
-              onClick={handleLinkClick}
-              className="text-primary hover:text-primary-hover underline"
-            >
-              {linkText}
-            </a>
+            {youdaoCloud ? (
+              <a
+                href={PRIVACY_URL}
+                onClick={handleLinkClick}
+                className="text-primary hover:underline cursor-pointer"
+              >
+                {linkText}
+              </a>
+            ) : (
+              <span className="text-foreground font-medium">{linkText}</span>
+            )}
             {parts[1]}
           </p>
         </div>
 
-        {/* Buttons */}
-        <div className="px-6 pb-6 pt-2 flex gap-3">
+        {/* Actions */}
+        <div className="px-6 pb-6 flex flex-col gap-2">
           <button
-            onClick={onReject}
-            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-secondary bg-surface-raised hover:opacity-80 transition-opacity"
-          >
-            {i18nService.t('privacyDialogReject')}
-          </button>
-          <button
+            type="button"
             onClick={onAccept}
-            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-primary hover:bg-primary-hover transition-colors"
+            className="w-full h-10 rounded-xl text-sm font-medium text-white bg-primary hover:opacity-90 transition-opacity"
           >
             {i18nService.t('privacyDialogAccept')}
+          </button>
+          <button
+            type="button"
+            onClick={onReject}
+            className="w-full h-10 rounded-xl text-sm font-medium text-secondary hover:text-foreground transition-colors"
+          >
+            {i18nService.t('privacyDialogReject')}
           </button>
         </div>
       </div>

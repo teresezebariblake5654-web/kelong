@@ -157,7 +157,14 @@ node --import tsx --input-type=module - <<'NODE'
 const { writePackageDistInventory } = await import('./src/infra/package-dist-inventory.ts');
 await writePackageDistInventory(process.cwd());
 NODE
-node scripts/test-built-bundled-channel-entry-smoke.mjs
+# Skip installed-layout smoke on Windows: it needs directory symlinks (EPERM without
+# Developer Mode / admin). The package-root smoke still covers entry resolution.
+if [[ "$NPM_TARGET_PLATFORM" == "win32" ]]; then
+  echo "[openclaw-runtime] Skipping bundled-channel installed-layout smoke on Windows (symlink EPERM)"
+  OPENCLAW_BUNDLED_CHANNEL_SMOKE_INSTALLED_LAYOUT=1 node scripts/test-built-bundled-channel-entry-smoke.mjs
+else
+  node scripts/test-built-bundled-channel-entry-smoke.mjs
+fi
 node scripts/package-changelog.mjs prepare
 OPENCLAW_CHANGELOG_PREPARED=1
 

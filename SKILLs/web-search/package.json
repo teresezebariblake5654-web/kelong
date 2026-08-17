@@ -9,13 +9,13 @@
     "dev": "tsc && node dist/server/index.js"
   },
   "keywords": [
-    "lobsterai",
+    "workhorseai",
     "skill",
     "web-search",
     "playwright",
     "cdp"
   ],
-  "author": "LobsterAI",
+  "author": "Workhorse AI",
   "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",

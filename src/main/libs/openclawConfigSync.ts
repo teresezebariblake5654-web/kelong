@@ -3,8 +3,10 @@ import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
+import { buildPublicIdentityPolicyPrompt } from '../../common/publicIdentityPrompt';
 import { buildScheduledTaskEnginePrompt } from '../../scheduledTask/enginePrompt';
 import { AgentId, DefaultAgentProfile } from '../../shared/agent';
+import { isImBotEnabled } from '../../shared/featureFlags';
 import {
   BrowserNetworkMode,
   BrowserRuntimeProfile,
@@ -263,10 +265,10 @@ const MANAGED_SKILL_ENTRY_OVERRIDES: Record<string, { enabled: boolean }> = {
   'feishu-cron-reminder': {
     enabled: false,
   },
-  // LobsterAI configures MCP servers via openclaw.json mcp.servers field.
+  // Workhorse AI configures MCP servers via openclaw.json mcp.servers field.
   // The bundled mcporter skill tries to discover MCP servers via its own CLI,
   // finds none, and produces confusing "no MCP servers" output. Disable it so
-  // users are routed through LobsterAI's MCP layer instead.
+  // users are routed through Workhorse AI's MCP layer instead.
   'mcporter': {
     enabled: false,
   },
@@ -295,10 +297,10 @@ const MANAGED_WEB_SEARCH_POLICY_PROMPT = [
   '- Do not use `web_fetch` to fetch Google/Bing search result pages as a search substitute; use `browser` or an available search skill instead.',
   '- If you need search discovery, dynamic pages, or interactive browsing, use the built-in `browser` tool.',
   '- For login-required, JavaScript-heavy, or anti-automation pages, use `browser` instead of `web_fetch`.',
-  '- Only use the LobsterAI `web-search` skill when local command execution is available. Native channel sessions may deny `exec`, so prefer `browser` or `web_fetch` there.',
+  '- Only use the Workhorse AI `web-search` skill when local command execution is available. Native channel sessions may deny `exec`, so prefer `browser` or `web_fetch` there.',
   '- Exception: the `imap-smtp-email` skill must always use `exec` to run its scripts, even in native channel sessions. Do not skip it because of exec restrictions.',
   '',
-  'Do not claim you searched the web unless you actually used `browser`, `web_fetch`, or the LobsterAI `web-search` skill.',
+  'Do not claim you searched the web unless you actually used `browser`, `web_fetch`, or the Workhorse AI `web-search` skill.',
 ].join('\n');
 
 const BUNDLED_BROWSER_PLUGIN_ID = 'browser';
@@ -306,9 +308,9 @@ const BUNDLED_BROWSER_PLUGIN_ID = 'browser';
 const MANAGED_BROWSER_POLICY_PROMPT = [
   '## Browser Policy',
   '',
-  'LobsterAI does not support sandbox browser execution in this version.',
+  'Workhorse AI does not support sandbox browser execution in this version.',
   '- For every `browser` tool call, set `target="host"` explicitly.',
-  '- Do not use `target="sandbox"` or `target="node"` unless a future LobsterAI version explicitly enables it.',
+  '- Do not use `target="sandbox"` or `target="node"` unless a future Workhorse AI version explicitly enables it.',
   '- If a browser call fails because the sandbox browser is unavailable, retry the same action with `target="host"`.',
 ].join('\n');
 
@@ -339,9 +341,9 @@ const MANAGED_EXEC_SAFETY_PROMPT = [
  * embedding in AGENTS.md so the model knows where to create new skills.
  *
  * Example outputs:
- *   macOS:   ~/Library/Application Support/LobsterAI/SKILLs
- *   Windows: ~/AppData/Roaming/LobsterAI/SKILLs
- *   Linux:   ~/.config/LobsterAI/SKILLs
+ *   macOS:   ~/Library/Application Support/Workhorse AI/SKILLs
+ *   Windows: ~/AppData/Roaming/Workhorse AI/SKILLs
+ *   Linux:   ~/.config/Workhorse AI/SKILLs
  */
 const resolveSkillCreationPath = (): string => {
   const skillsDir = path.join(app.getPath('userData'), 'SKILLs');
@@ -356,7 +358,7 @@ const resolveSkillCreationPath = (): string => {
 const buildManagedSkillCreationPrompt = (skillsDirPath: string): string => [
   '## Skill Creation',
   '',
-  'When the user asks you to create a new skill, you MUST place it under the LobsterAI skills directory:',
+  'When the user asks you to create a new skill, you MUST place it under the Workhorse AI skills directory:',
   '',
   `  ${skillsDirPath}/<skill-name>/SKILL.md`,
   '',
@@ -394,6 +396,7 @@ const MANAGED_MEMORY_POLICY_PROMPT = [
   '- Only say "记住了" / "I\'ll remember that" AFTER the write tool call succeeds.',
   '- Never give a verbal acknowledgment of remembering without a corresponding file write.',
   '- "Mental notes" do not survive session restarts. Files do.',
+  '- Durable memories in MEMORY.md are shared across every chat of this agent (Codex/OpenClaw style).',
   '',
   '**MEMORY.md format.** Keep each memory readable as one self-contained block:',
   '',
@@ -415,6 +418,12 @@ const MANAGED_HEARTBEAT_POLICY_PROMPT = [
   '- On a heartbeat poll with nothing that needs attention, reply `HEARTBEAT_OK`; do not go looking for work.',
 ].join('\n');
 
+/**
+ * Public-facing identity. Keep this as the last managed override so casual
+ * "what are you / what API / who built this" questions do not dump internals.
+ */
+const MANAGED_PUBLIC_IDENTITY_POLICY_PROMPT = buildPublicIdentityPolicyPrompt();
+
 const FALLBACK_OPENCLAW_AGENTS_TEMPLATE = [
   '# AGENTS.md - Your Workspace',
   '',
@@ -431,7 +440,7 @@ const FALLBACK_OPENCLAW_AGENTS_TEMPLATE = [
   '1. Read `SOUL.md`.',
   '2. Read `USER.md`.',
   '3. Read `memory/YYYY-MM-DD.md` for today and yesterday.',
-  '4. In the main session, also read `MEMORY.md`.',
+  '4. Always read `MEMORY.md` for this agent — durable facts are shared across every chat of this agent.',
   '',
   'Do not ask permission first.',
   '',
@@ -1082,8 +1091,8 @@ export type OpenClawProviderModelSource = {
 
 /**
  * Classifies an OpenClaw provider id (as reported in gateway error metadata)
- * back to the LobsterAI Settings entry it was generated from, so runtime
- * errors can tell the user whether the failing model is the LobsterAI plan,
+ * back to the Workhorse AI Settings entry it was generated from, so runtime
+ * errors can tell the user whether the failing model is the Workhorse AI plan,
  * a vendor coding plan, or their own custom provider.
  */
 export function resolveModelSourceForOpenClawProvider(
@@ -1094,7 +1103,7 @@ export function resolveModelSourceForOpenClawProvider(
 
   if (providerId === OpenClawProviderId.LobsteraiServer) {
     return {
-      source: CoworkErrorModelSource.LobsterAIPlan,
+      source: CoworkErrorModelSource.WorkhorseAIPlan,
       providerName: ProviderName.LobsteraiServer,
     };
   }
@@ -1547,7 +1556,7 @@ export class OpenClawConfigSync {
    * read against a "last known good" fingerprint.  One of the checks is
    * `hasConfigMeta` — if the previous good config had `meta` but the current
    * one doesn't, an anomaly is logged and the file content is persisted as a
-   * `.clobbered.<timestamp>` snapshot.  Because LobsterAI writes openclaw.json
+   * `.clobbered.<timestamp>` snapshot.  Because Workhorse AI writes openclaw.json
    * directly (bypassing OpenClaw's own `writeConfigFile` which calls
    * `stampConfigVersion`), we need to stamp `meta` ourselves.
    */
@@ -1621,7 +1630,9 @@ export class OpenClawConfigSync {
       deny: [
         ...MANAGED_TOOL_DENY
       ],
-loopDetection: MANAGED_TOOL_LOOP_DETECTION,
+      loopDetection: MANAGED_TOOL_LOOP_DETECTION,
+      // Keep default OpenClaw visibility ("tree"): each chat is isolated.
+      // Long-term persona/preferences live in MEMORY.md, not cross-session transcript recall.
       web: {
         search: {
           enabled: false,
@@ -1867,26 +1878,27 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     console.log(`${gwDiagTs()} existingPlugins keys:`, Object.keys(existingPlugins).sort().join(',') || '(empty)');
     console.log(`${gwDiagTs()} existingPluginEntries keys:`, Object.keys(existingPluginEntries).sort().join(',') || '(empty)');
 
-    const dingTalkInstances = this.getDingTalkInstances();
+    const imEnabled = isImBotEnabled();
+    const dingTalkInstances = imEnabled ? this.getDingTalkInstances() : [];
     // DingTalk runs through OpenClaw plugin but still needs the gateway HTTP endpoint (chatCompletions)
     const hasDingTalkOpenClaw = dingTalkInstances.some(i => i.enabled && i.clientId);
 
-    const feishuInstances = this.getFeishuInstances();
+    const feishuInstances = imEnabled ? this.getFeishuInstances() : [];
 
-    const qqInstances = this.getQQInstances();
-    const discordInstances = this.getDiscordInstances();
+    const qqInstances = imEnabled ? this.getQQInstances() : [];
+    const discordInstances = imEnabled ? this.getDiscordInstances() : [];
 
-    const wecomInstances = this.getWecomInstances();
+    const wecomInstances = imEnabled ? this.getWecomInstances() : [];
 
-    const popoInstances = this.getPopoInstances();
+    const popoInstances = imEnabled ? this.getPopoInstances() : [];
 
-    const emailConfig = this.getEmailOpenClawConfig?.();
+    const emailConfig = imEnabled ? this.getEmailOpenClawConfig?.() : undefined;
 
-    const nimInstances = this.getNimInstances();
+    const nimInstances = imEnabled ? this.getNimInstances() : [];
 
-    const neteaseBeeChanConfig = this.getNeteaseBeeChanConfig();
+    const neteaseBeeChanConfig = imEnabled ? this.getNeteaseBeeChanConfig() : undefined;
 
-    const weixinConfig = this.getWeixinConfig();
+    const weixinConfig = imEnabled ? this.getWeixinConfig() : undefined;
 
     const hasAnyChannel = hasDingTalkOpenClaw;
 
@@ -1947,6 +1959,8 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
           ...(taskWorkingDirectory ? { cwd: path.resolve(taskWorkingDirectory) } : {}),
           memorySearch: {
             enabled: true,
+            // Index MEMORY.md / memory files only. Session transcripts stay isolated
+            // so daily chats do not auto-recall sibling conversations.
             provider: coworkConfig.embeddingEnabled
               ? (['openai', 'gemini', 'voyage', 'mistral', 'ollama'].includes(coworkConfig.embeddingProvider)
                 ? coworkConfig.embeddingProvider
@@ -2064,7 +2078,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
                 if (pluginMatches(plugin, 'openclaw-nim-channel', NIM_CHANNEL_PLUGIN_ID, 'nim'))
                   return nimInstances.some(isEnabledNimRuntimeInstance);
                 if (pluginMatches(plugin, 'openclaw-netease-bee')) return !!(neteaseBeeChanConfig?.enabled && neteaseBeeChanConfig.clientId && neteaseBeeChanConfig.secret);
-                if (pluginMatches(plugin, 'openclaw-weixin')) return true; // Always keep enabled for QR login discovery
+                if (pluginMatches(plugin, 'openclaw-weixin')) return isImBotEnabled(); // Keep only when IM bots are enabled
                 if (pluginMatches(plugin, 'clawemail-email', EMAIL_PLUGIN_ID)) return !!emailConfig?.instances.some(i => i.enabled && i.email);
                 return true; // other plugins stay enabled
               })();
@@ -2088,7 +2102,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
               ...(p.config && Object.keys(p.config).length > 0 ? { config: p.config } : {}),
             }]),
           ),
-          // Disable acpx (ACP agent runtime) — LobsterAI does not use ACP and
+          // Disable acpx (ACP agent runtime) — Workhorse AI does not use ACP and
           // the embedded probe adds ~11s to gateway startup while it waits for
           // a process that always fails.  See openclaw/openclaw#62588.
           'acpx': { enabled: false },
@@ -2217,7 +2231,35 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     }
 
     // Sync Telegram OpenClaw channel config — multi-instance via accounts
-    const telegramInstances = this.getTelegramInstances();
+    // IM bots offline: strip all channel plugins so OpenClaw will not load them.
+    const IM_CHANNEL_KEYS = [
+      'telegram',
+      'discord',
+      'feishu',
+      'dingtalk',
+      'dingtalk-connector',
+      'qqbot',
+      'wecom',
+      'wecom-openclaw-plugin',
+      'openclaw-weixin',
+      'weixin',
+      'nim',
+      'netease-bee',
+      'moltbot-popo',
+      'popo',
+      'email',
+      'clawemail',
+      'clawemail-email',
+    ] as const;
+    if (!isImBotEnabled()) {
+      const channels = { ...((managedConfig.channels as Record<string, unknown>) || {}) };
+      for (const key of IM_CHANNEL_KEYS) {
+        delete channels[key];
+      }
+      managedConfig.channels = channels;
+    }
+
+    const telegramInstances = imEnabled ? this.getTelegramInstances() : [];
     const enabledTelegramInstances = telegramInstances.filter(i => i.enabled && i.botToken);
     if (enabledTelegramInstances.length > 0) {
       const accounts: Record<string, unknown> = {};
@@ -2390,7 +2432,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         clientSecret: `\${${secretEnvVar}}`,
         // v3.5.x schema: dmPolicy/groupPolicy/allowFrom are valid; sessionTimeout/
         // separateSessionByConversation/groupSessionScope/sharedMemoryAcrossConversations/
-        // gatewayBaseUrl were LobsterAI-specific and are not in the plugin schema.
+        // gatewayBaseUrl were Workhorse AI-specific and are not in the plugin schema.
         dmPolicy: inst.dmPolicy || 'open',
         allowFrom: (() => {
           const ids = inst.allowFrom?.length ? [...inst.allowFrom] : [];
@@ -2660,7 +2702,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     // Sync Weixin OpenClaw channel config (via openclaw-weixin plugin)
     // Only write the channel entry when the plugin is actually installed,
     // otherwise the gateway rejects the config as invalid.
-    if (hasPreinstalledPlugin('openclaw-weixin')) {
+    if (imEnabled && hasPreinstalledPlugin('openclaw-weixin')) {
       const weixinChannelEnabled = !!weixinConfig?.enabled;
       const weixinChannel: Record<string, unknown> = {
         enabled: weixinChannelEnabled,
@@ -2952,7 +2994,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
   }
 
   /**
-   * Ensures exec-approvals.json under the LobsterAI-managed openclaw home has
+   * Ensures exec-approvals.json under the Workhorse AI-managed openclaw home has
    * security=full + ask=off so the gateway never triggers approval-pending
    * for any command. The path must match the OPENCLAW_HOME env var passed to
    * the gateway process so both sides read/write the same file.
@@ -3155,13 +3197,13 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
   }
 
   /**
-   * Resolve the LobsterAI SKILLs installation directory for OpenClaw's
+   * Resolve the Workhorse AI SKILLs installation directory for OpenClaw's
    * `skills.load.extraDirs` configuration.
    *
    * Cross-platform paths (via Electron app.getPath('userData')):
-   *   macOS:   ~/Library/Application Support/LobsterAI/SKILLs
-   *   Windows: %APPDATA%/LobsterAI/SKILLs
-   *   Linux:   ~/.config/LobsterAI/SKILLs
+   *   macOS:   ~/Library/Application Support/Workhorse AI/SKILLs
+   *   Windows: %APPDATA%/Workhorse AI/SKILLs
+   *   Linux:   ~/.config/Workhorse AI/SKILLs
    */
   private resolveSkillsExtraDirs(): string[] {
     const userDataSkillsDir = path.join(app.getPath('userData'), 'SKILLs');
@@ -3184,8 +3226,8 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
   }
 
   /**
-   * Build per-skill `enabled` overrides from the LobsterAI SkillManager state,
-   * so that skills disabled in the LobsterAI UI are also hidden from OpenClaw.
+   * Build per-skill `enabled` overrides from the Workhorse AI SkillManager state,
+   * so that skills disabled in the Workhorse AI UI are also hidden from OpenClaw.
    */
   private buildSkillEntries(): Record<string, { enabled: boolean }> {
     const skills = this.getSkillsList?.() ?? [];
@@ -3200,10 +3242,10 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
    * Sync AGENTS.md to the OpenClaw workspace directory.
    * Embeds the skills routing prompt and system prompt so that OpenClaw's
    * native channel connectors (DingTalk, Feishu, etc.) can discover and
-   * invoke LobsterAI skills.
+   * invoke Workhorse AI skills.
    */
   private syncAgentsMd(workspaceDir: string, coworkConfig: CoworkConfig): string | undefined {
-    const MARKER = '<!-- LobsterAI managed: do not edit below this line -->';
+    const MARKER = '<!-- Workhorse AI managed: do not edit below this line -->';
 
     try {
       ensureDir(workspaceDir);
@@ -3236,6 +3278,9 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         sections.push(scheduledTaskPrompt);
       }
 
+      // Final override: public product identity / anti-leak. Must stay last.
+      sections.push(MANAGED_PUBLIC_IDENTITY_POLICY_PROMPT);
+
       // Read existing file once to avoid TOCTOU issues
       let existingContent = '';
       try {
@@ -3248,7 +3293,12 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
       const markerIdx = existingContent.indexOf(MARKER);
       const userContent =
         markerIdx >= 0 ? existingContent.slice(0, markerIdx).trimEnd() : existingContent.trimEnd();
-      const preservedUserContent = userContent || readBundledOpenClawAgentsTemplate();
+      const preservedUserContent = (userContent || readBundledOpenClawAgentsTemplate())
+        // Migrate older templates that only loaded MEMORY.md in the "main" session.
+        .replace(
+          /4\.\s*In the main session, also read `MEMORY\.md`\./g,
+          '4. Always read `MEMORY.md` for this agent — durable facts are shared across every chat of this agent.',
+        );
 
       if (sections.length === 0) {
         // No managed content — remove the managed section if present,

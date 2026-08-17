@@ -9,6 +9,7 @@
  */
 
 import { stripGoalCommandPrefixForDisplay } from '../../common/sessionTitle';
+import { normalizeWorkhorseVisibleUserText } from '../../common/workhorseOutboundPrompt';
 
 // --------------- Pattern A: NIM/DingTalk ---------------
 
@@ -72,7 +73,9 @@ export function parseUserMessageForDisplay(
 
   // Normalize \r\n to \n so all line-anchored regexes work correctly
   let result = (content || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  // LobsterAI sends goal-mode submissions to OpenClaw as local /goal commands.
+  // Strip Workhorse outbound system envelopes if gateway history leaked them into local UI.
+  result = normalizeWorkhorseVisibleUserText(result);
+  // 火星 AI sends goal-mode submissions to OpenClaw as local /goal commands.
   // The command is transport/control syntax, not user-facing message text.
   result = stripGoalCommandPrefixForDisplay(result);
 

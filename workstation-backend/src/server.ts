@@ -2,6 +2,7 @@ import { createApp } from './app';
 import { connectDatabase, disconnectDatabase } from './config/database';
 import { env } from './config/env';
 import { initLlmRuntimeFromEnv } from './providers/llm';
+import { closeLeadDiscoveryQueue } from './queues/lead-discovery.queue';
 import { logger } from './utils/logger';
 
 const SHUTDOWN_TIMEOUT_MS = 15_000;
@@ -44,6 +45,7 @@ async function main() {
         });
       }
       try {
+        await closeLeadDiscoveryQueue();
         await disconnectDatabase();
         logger.info('backend_database_disconnected');
         process.exit(exitCode);

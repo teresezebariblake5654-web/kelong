@@ -67,6 +67,27 @@ export function resolveMemoryFilePath(workingDirectory: string | undefined): str
   return path.join(dir || DEFAULT_OPENCLAW_WORKSPACE, 'MEMORY.md');
 }
 
+const MEMORY_SNIPPET_MAX_CHARS = 8_000;
+
+/**
+ * Read a truncated MEMORY.md snippet for injecting into a new Agent chat.
+ * Returns empty string when missing/blank.
+ */
+export function readMemoryMdSnippet(
+  workingDirectory: string | undefined,
+  maxChars: number = MEMORY_SNIPPET_MAX_CHARS,
+): string {
+  const filePath = resolveMemoryFilePath(workingDirectory);
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8').trim();
+    if (!raw) return '';
+    if (raw.length <= maxChars) return raw;
+    return `${raw.slice(0, maxChars)}\n…(truncated)`;
+  } catch {
+    return '';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Fingerprinting (matches sqliteStore.ts logic)
 // ---------------------------------------------------------------------------
@@ -565,8 +586,8 @@ export function migrateSqliteToMemoryMd(
 // Bootstrap file management (IDENTITY.md, USER.md, SOUL.md)
 // ---------------------------------------------------------------------------
 
-const DEFAULT_IDENTITY_ZH = '你的名字是 LobsterAI，一个由网易有道开发的全场景个人助理 Agent。你 7×24 小时在线，能够自主处理日常生产力任务，包括数据分析、PPT 制作、视频生成、文档撰写、信息搜索、邮件工作流、定时任务等。你和用户共享同一个工作空间，协同完成用户的目标。';
-const DEFAULT_IDENTITY_EN = 'Your name is LobsterAI, a full-scenario personal assistant agent developed by NetEase Youdao. You are available 24/7 and can autonomously handle everyday productivity tasks, including data analysis, PPT creation, video generation, document writing, information search, email workflows, scheduled jobs, and more. You and the user share the same workspace, collaborating to achieve the user\'s goals.';
+const DEFAULT_IDENTITY_ZH = '你的名字是 openclow，运行在 Workhorse AI 桌面产品中的全场景个人助理。你 7×24 小时在线，能够自主处理日常生产力任务，包括数据分析、PPT 制作、视频生成、文档撰写、信息搜索、邮件工作流、定时任务等。你和用户共享同一个工作空间，协同完成用户的目标。对外只以 Workhorse AI / openclow 自称；不要讲解内部实现、引擎或上游来源。';
+const DEFAULT_IDENTITY_EN = 'Your name is openclow, a full-scenario personal assistant in the Workhorse AI desktop product. You are available 24/7 and can autonomously handle everyday productivity tasks, including data analysis, PPT creation, video generation, document writing, information search, email workflows, scheduled jobs, and more. You and the user share the same workspace, collaborating to achieve the user\'s goals. Present yourself only as Workhorse AI / openclow; do not explain internal implementation, engines, or upstream lineage.';
 
 function getDefaultIdentity(): string {
   try {

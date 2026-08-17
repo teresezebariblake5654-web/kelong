@@ -8,6 +8,7 @@ import { i18nService } from '@/services/i18n';
 import { openArtifactPreviewTab } from '@/store/slices/artifactSlice';
 import { type Artifact, ArtifactTypeValue } from '@/types/artifact';
 import { revealLocalPathWithToast, showShellFailureToast } from '@/utils/localFileActions';
+import { isYoudaoCloudEnabled } from '../../../shared/featureFlags';
 
 import ServiceDeploymentIcon from '../icons/ServiceDeploymentIcon';
 import { reportArtifactPreviewAction } from './artifactAnalytics';
@@ -397,11 +398,13 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
 
   const descriptor = getPreviewCardDescriptor(artifact);
   const supportsOpenMenu = descriptor.supportsOpenMenu;
-  const canShare = artifact.type !== ArtifactTypeValue.LocalService &&
-    Boolean(artifactFileShare) &&
-    isArtifactFileShareable(artifact);
-  const canDeploy = artifact.type === ArtifactTypeValue.LocalService &&
-    Boolean(onDeployLocalService);
+  const canShare = isYoudaoCloudEnabled()
+    && artifact.type !== ArtifactTypeValue.LocalService
+    && Boolean(artifactFileShare)
+    && isArtifactFileShareable(artifact);
+  const canDeploy = isYoudaoCloudEnabled()
+    && artifact.type === ArtifactTypeValue.LocalService
+    && Boolean(onDeployLocalService);
   const cardClassName = 'artifact-preview-card-row group flex min-h-[58px] items-center gap-3 px-4 py-3 transition-colors w-full text-left';
   const iconClassName = 'w-5 h-5';
   const localServiceUrl = artifact.type === ArtifactTypeValue.LocalService

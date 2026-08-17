@@ -26,6 +26,7 @@ import { getPortalPricingUrl, PortalPricingKeyfrom } from '@/services/endpoints'
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 import type { Artifact } from '@/types/artifact';
+import { isYoudaoCloudEnabled } from '../../../shared/featureFlags';
 
 import { reportArtifactPreviewAction } from './artifactAnalytics';
 import { buildArtifactFileShareCopyText } from './artifactFileShareCopy';
@@ -543,6 +544,9 @@ export function ArtifactFileShareProvider({ sessionId, children }: ArtifactFileS
 
   const openShare = useCallback(
     async (artifact: Artifact): Promise<void> => {
+      if (!isYoudaoCloudEnabled()) {
+        return;
+      }
       const sourceType = getArtifactFileShareSourceType(artifact);
       reportArtifactPreviewAction({
         actionType: 'share_html_click',
@@ -935,6 +939,10 @@ export function ArtifactFileShareProvider({ sessionId, children }: ArtifactFileS
   }, [dialog, showTimedCopyStatus]);
 
   const openSubscriptionPage = useCallback(() => {
+    if (!isYoudaoCloudEnabled()) {
+      closeSubscriptionPrompt();
+      return;
+    }
     void window.electron?.shell?.openExternal(getPortalPricingUrl(PortalPricingKeyfrom.HtmlShare));
     closeSubscriptionPrompt();
   }, [closeSubscriptionPrompt]);

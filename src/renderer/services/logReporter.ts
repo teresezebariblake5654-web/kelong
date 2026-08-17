@@ -1,6 +1,7 @@
 import { store } from '../store';
 import { configService } from './config';
 import { getInstallationId } from './installationId';
+import { isYoudaoCloudEnabled } from '../../shared/featureFlags';
 
 export const LogReporterEndpoint = {
   YoudaoAnalyzer: 'https://rlogs.youdao.com/rlog.php',
@@ -233,6 +234,10 @@ export const buildLogUrl = (
 };
 
 export const reportYdAnalyzer = async (params: LogEventParams): Promise<boolean> => {
+  if (!isYoudaoCloudEnabled()) {
+    return false;
+  }
+
   if (configService.getConfig().usageAnalyticsEnabled === false) {
     writeReporterLog('debug', `skipped event ${params.action} because usage analytics is disabled`);
     return false;

@@ -48,6 +48,10 @@ nul
 
 sandbox/
 
+# Large installers staged for the public download page (keep .gitkeep)
+website/downloads/*
+!website/downloads/.gitkeep
+
 # Accidentally committed git hook files outside git-hooks/
 **/**/post-commit
 openspec/

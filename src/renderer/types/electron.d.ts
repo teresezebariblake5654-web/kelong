@@ -270,6 +270,9 @@ interface OpenClawEngineStatus {
   gatewayPort?: number | null;
   gatewayHttpUrl?: string | null;
   canRetry: boolean;
+  /** Recent crash reason for UI / diagnostics (never includes secrets). */
+  lastExitReason?: string;
+  recentRestartCount?: number;
 }
 
 interface OpenClawGatewayRepairResult {
@@ -746,6 +749,12 @@ interface IElectronAPI {
         status?: OpenClawEngineStatus;
         error?: string;
       }>;
+      recoverFromCrash: () => Promise<{
+        success: boolean;
+        status?: OpenClawEngineStatus;
+        error?: string;
+      }>;
+      getGatewayLogPath: () => Promise<{ success: boolean; path?: string; error?: string }>;
       repairGatewayState: () => Promise<OpenClawGatewayRepairResult>;
       onProgress: (callback: (status: OpenClawEngineStatus) => void) => () => void;
     };
@@ -1032,19 +1041,30 @@ interface IElectronAPI {
       query?: string;
       limit?: number;
       offset?: number;
+      agentId?: string;
     }) => Promise<{ success: boolean; entries?: CoworkUserMemoryEntry[]; error?: string }>;
     createMemoryEntry: (input: {
       text: string;
+      agentId?: string;
     }) => Promise<{ success: boolean; entry?: CoworkUserMemoryEntry; error?: string }>;
     updateMemoryEntry: (input: {
       id: string;
       text: string;
+      agentId?: string;
     }) => Promise<{ success: boolean; entry?: CoworkUserMemoryEntry; error?: string }>;
-    deleteMemoryEntry: (input: { id: string }) => Promise<{ success: boolean; error?: string }>;
-    getMemoryStats: () => Promise<{ success: boolean; stats?: CoworkMemoryStats; error?: string }>;
-    readMemoryFileRaw: () => Promise<{ success: boolean; content?: string; error?: string }>;
+    deleteMemoryEntry: (input: {
+      id: string;
+      agentId?: string;
+    }) => Promise<{ success: boolean; error?: string }>;
+    getMemoryStats: (input?: {
+      agentId?: string;
+    }) => Promise<{ success: boolean; stats?: CoworkMemoryStats; error?: string }>;
+    readMemoryFileRaw: (input?: {
+      agentId?: string;
+    }) => Promise<{ success: boolean; content?: string; error?: string }>;
     writeMemoryFileRaw: (input: {
       content: string;
+      agentId?: string;
     }) => Promise<{ success: boolean; error?: string }>;
     readBootstrapFile: (
       filename: string,
@@ -1166,6 +1186,7 @@ interface IElectronAPI {
   };
   clipboard: {
     writeText: (text: string) => Promise<{ success: boolean; error?: string }>;
+    readText: () => Promise<{ success: boolean; text?: string; error?: string }>;
     writeImageFromFile: (filePath: string) => Promise<{ success: boolean; error?: string }>;
     writeImageFromDataUrl: (dataUrl: string) => Promise<{ success: boolean; error?: string }>;
   };
@@ -1901,6 +1922,82 @@ interface IElectronAPI {
         expiresInMs: number;
       }) => void,
     ) => () => void;
+  };
+  workstation: {
+    getUserDataPath: (departmentId?: string) => Promise<{
+      userData: string;
+      workstationRoot: string;
+      lobsterRoot: string;
+      departmentPath: string;
+      departmentId: string;
+    }>;
+    ensureDirs: (departmentId?: string) => Promise<{
+      userData: string;
+      workstationRoot: string;
+      lobsterRoot: string;
+      departmentPath: string;
+      departmentId: string;
+    }>;
+    sessionUpsert: (record: {
+      productMode?: 'workstation';
+      departmentId: string;
+      workstationConversationId: string;
+      openClawSessionId: string;
+      workspacePath: string;
+      memoryNamespace: string;
+      updatedAt?: number;
+    }) => Promise<{ success: boolean; record?: unknown; error?: string }>;
+    sessionList: (departmentId: string) => Promise<{
+      success: boolean;
+      sessions?: Array<{
+        productMode: 'workstation';
+        departmentId: string;
+        workstationConversationId: string;
+        openClawSessionId: string;
+        workspacePath: string;
+        memoryNamespace: string;
+        updatedAt: number;
+      }>;
+      error?: string;
+    }>;
+    sessionGet: (openClawSessionId: string) => Promise<{
+      success: boolean;
+      record?: {
+        productMode: 'workstation';
+        departmentId: string;
+        workstationConversationId: string;
+        openClawSessionId: string;
+        workspacePath: string;
+        memoryNamespace: string;
+        updatedAt: number;
+      } | null;
+      error?: string;
+    }>;
+    sessionRemove: (openClawSessionId: string) => Promise<{
+      success: boolean;
+      removed?: boolean;
+      error?: string;
+    }>;
+    http: (options: {
+      method?: string;
+      path: string;
+      headers?: Record<string, string>;
+      body?: string | null;
+      timeoutMs?: number;
+      multipartField?: string;
+      multipartFileName?: string;
+      bodyBase64?: string;
+      multipartExtraFields?: Record<string, string>;
+      responseType?: 'text' | 'base64';
+    }) => Promise<{
+      success: boolean;
+      status: number;
+      ok: boolean;
+      headers?: Record<string, string>;
+      body: string;
+      bodyBase64?: string;
+      error?: string;
+    }>;
   };
 }
 

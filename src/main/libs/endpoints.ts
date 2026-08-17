@@ -50,8 +50,8 @@ export const getManualUpdateCheckUrl = (): string => (
 
 export const getFallbackDownloadUrl = (): string => (
   isTestModeEnabled()
-    ? 'https://lobsterai.inner.youdao.com/#/download-list'
-    : 'https://lobsterai.youdao.com/#/download-list'
+    ? 'https://bx-aigc.com/#/download-list'
+    : 'https://bx-aigc.com/#/download-list'
 );
 
 export const getSkillStoreUrl = (): string => (

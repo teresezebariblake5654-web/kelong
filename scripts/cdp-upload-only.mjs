@@ -1,0 +1,24 @@
+﻿import WebSocket from "ws";
+const list=await fetch("http://127.0.0.1:9222/json/list").then(r=>r.json());
+const page=list.find(p=>p.type==="page"&&String(p.url||"").includes("5175"))||list.find(p=>p.type==="page");
+const ws=new WebSocket(page.webSocketDebuggerUrl);
+await new Promise((res,rej)=>{ws.once("open",res);ws.once("error",rej);});
+let id=0; const pending=new Map();
+ws.on("message",raw=>{const msg=JSON.parse(String(raw)); if(msg.id&&pending.has(msg.id)){const {resolve,reject}=pending.get(msg.id); pending.delete(msg.id); if(msg.error) reject(new Error(JSON.stringify(msg.error))); else resolve(msg.result);}});
+const send=(method,params={})=>new Promise((resolve,reject)=>{const i=++id; pending.set(i,{resolve,reject}); ws.send(JSON.stringify({id:i,method,params}));});
+const ev=async(expression,awaitPromise=false)=>{const r=await send("Runtime.evaluate",{expression,awaitPromise,returnByValue:true,userGesture:true}); if(r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails)); return r.result?.value;};
+await send("Runtime.enable");
+const out=await ev(`(async()=>{
+  localStorage.removeItem('lobsterai.workstation.userAccessToken');
+  localStorage.removeItem('lobsterai.workstation.activeOrganizationId');
+  const api=await import('/src/renderer/workstation/services/workstationApi.ts');
+  const login=await api.workstationFetch('/api/v1/auth/login',{method:'POST',body:JSON.stringify({email:'demo@example.com',password:'DemoPass123!'})});
+  localStorage.setItem('lobsterai.workstation.userAccessToken', login.accessToken);
+  if(login.organizations?.[0]?.id) localStorage.setItem('lobsterai.workstation.activeOrganizationId', login.organizations[0].id);
+  const file=new File(['upload-ok-'+Date.now()],'up.txt',{type:'text/plain'});
+  const uploaded=await api.uploadWorkstationFile('/api/files/upload', file);
+  return {loginOk:!!login.accessToken, uploaded};
+})()`, true);
+console.log(out);
+console.log(out?.uploaded ? 'UPLOAD_PASS' : 'UPLOAD_FAIL');
+ws.close();

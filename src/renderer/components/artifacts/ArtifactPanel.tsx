@@ -60,6 +60,7 @@ import {
   writeLocalServiceProjectDirectory as writeNodeDeploymentProjectDirectory,
 } from '@/services/localServiceProjectDirectoryCache';
 import type { RootState } from '@/store';
+import { isYoudaoCloudEnabled } from '../../../shared/featureFlags';
 import {
   addArtifact,
   ArtifactContentView,
@@ -1612,6 +1613,10 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   ]);
 
   const openSubscriptionPage = useCallback(() => {
+    if (!isYoudaoCloudEnabled()) {
+      closeSubscriptionPrompt();
+      return;
+    }
     void window.electron?.shell?.openExternal(
       getPortalPricingUrl(PortalPricingKeyfrom.HtmlShare),
     );
@@ -1638,6 +1643,9 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const ensureArtifactSubscriptionAllowed = useCallback(async (
     feature: ArtifactSubscriptionFeatureValue,
   ): Promise<boolean> => {
+    if (!isYoudaoCloudEnabled()) {
+      return false;
+    }
     const decision = await resolveArtifactSubscriptionDecision({
       isLoggedIn: authState.isLoggedIn,
       subscriptionStatus: authState.quota?.subscriptionStatus,

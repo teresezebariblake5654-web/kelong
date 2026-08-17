@@ -4,9 +4,9 @@
 
 ### 1.1 问题
 
-用户未主动修改 OpenClaw、IM 或模型配置时，GitHub Copilot 的后台 token 刷新会引起 OpenClaw Gateway 硬重启。表现为 Gateway 收到 `SIGTERM`，随后 LobsterAI 主进程重新 fork gateway。
+用户未主动修改 OpenClaw、IM 或模型配置时，GitHub Copilot 的后台 token 刷新会引起 OpenClaw Gateway 硬重启。表现为 Gateway 收到 `SIGTERM`，随后 Workhorse AI 主进程重新 fork gateway。
 
-从日志看，本次重启不是 Gateway 崩溃，而是 LobsterAI 主进程主动执行：
+从日志看，本次重启不是 Gateway 崩溃，而是 Workhorse AI 主进程主动执行：
 
 ```text
 [CopilotTokenManager] refreshing Copilot API token...

@@ -4,6 +4,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { isYoudaoCloudEnabled } from '../../shared/featureFlags';
 import { getProviderIcon, ProviderIconId } from '../providers/uiRegistry';
 import { authService } from '../services/auth';
 import { i18nService } from '../services/i18n';
@@ -63,6 +64,7 @@ export interface ModelSelectorChangeMeta {
 export const ModelAccessPromptKind = {
   Login: 'login',
   Subscribe: 'subscribe',
+  ConfigureModel: 'configure_model',
 } as const;
 export type ModelAccessPromptKind = typeof ModelAccessPromptKind[keyof typeof ModelAccessPromptKind];
 
@@ -83,18 +85,53 @@ export const ModelAccessPromptModal: React.FC<ModelAccessPromptModalProps> = ({
   primaryButtonKey,
   showLearnMore = true,
 }) => {
-  const loginPrompt = promptKind === ModelAccessPromptKind.Login;
-  const resolvedTitleKey = titleKey ?? (loginPrompt ? 'modelSelectorLoginTitle' : 'modelSelectorSubscribeTitle');
-  const resolvedDescriptionKey = descriptionKey ?? (loginPrompt ? 'modelSelectorLoginDesc' : 'modelSelectorSubscribeDesc');
-  const resolvedPrimaryButtonKey = primaryButtonKey ?? (loginPrompt ? 'modelSelectorLoginBtn' : 'modelSelectorSubscribeBtn');
+  const youdaoCloud = isYoudaoCloudEnabled();
+  const configurePrompt = promptKind === ModelAccessPromptKind.ConfigureModel
+    || (!youdaoCloud && promptKind !== ModelAccessPromptKind.Login);
+  const loginPrompt = !configurePrompt && promptKind === ModelAccessPromptKind.Login;
+  const resolvedTitleKey = titleKey ?? (
+    configurePrompt
+      ? 'modelSelectorConfigureTitle'
+      : loginPrompt
+        ? 'modelSelectorLoginTitle'
+        : 'modelSelectorSubscribeTitle'
+  );
+  const resolvedDescriptionKey = descriptionKey ?? (
+    configurePrompt
+      ? 'modelSelectorConfigureDesc'
+      : loginPrompt
+        ? 'modelSelectorLoginDesc'
+        : 'modelSelectorSubscribeDesc'
+  );
+  const resolvedPrimaryButtonKey = primaryButtonKey ?? (
+    configurePrompt
+      ? 'modelSelectorConfigureBtn'
+      : loginPrompt
+        ? 'modelSelectorLoginBtn'
+        : 'modelSelectorSubscribeBtn'
+  );
 
   const openSubscriptionPage = async () => {
+    if (!youdaoCloud) {
+      onClose();
+      window.dispatchEvent(new CustomEvent('app:requestOpenSettings', {
+        detail: { initialTab: 'model' },
+      }));
+      return;
+    }
     onClose();
     const { getPortalPricingUrl } = await import('../services/endpoints');
     await window.electron.shell.openExternal(getPortalPricingUrl());
   };
 
   const handlePrimary = async () => {
+    if (configurePrompt || !youdaoCloud) {
+      onClose();
+      window.dispatchEvent(new CustomEvent('app:requestOpenSettings', {
+        detail: { initialTab: 'model' },
+      }));
+      return;
+    }
     if (promptKind === ModelAccessPromptKind.Login) {
       onClose();
       await authService.login();
@@ -134,7 +171,7 @@ export const ModelAccessPromptModal: React.FC<ModelAccessPromptModalProps> = ({
       >
         {i18nService.t(resolvedPrimaryButtonKey)}
       </button>
-      {loginPrompt && showLearnMore && (
+      {loginPrompt && showLearnMore && youdaoCloud && (
         <button
           type="button"
           onClick={() => { void openSubscriptionPage(); }}
@@ -197,7 +234,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const [resolvedDirection, setResolvedDirection] = React.useState<'up' | 'down'>('down');
   const [portalStyle, setPortalStyle] = React.useState<React.CSSProperties>({});
   const [listMaxHeight, setListMaxHeight] = React.useState<number>(LIST_MAX_HEIGHT);
-  const [activeGroup, setActiveGroup] = React.useState<ModelSelectorGroup>(ModelSelectorGroup.Server);
+  const [activeGroup, setActiveGroup] = React.useState<ModelSelectorGroup>(
+    isYoudaoCloudEnabled() ? ModelSelectorGroup.Server : ModelSelectorGroup.User,
+  );
   const containerRef = React.useRef<HTMLDivElement>(null);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
@@ -215,7 +254,8 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const selectedModel = controlled ? value ?? null : globalSelectedModel;
   const selectedModelKey = selectedModel ? getModelIdentityKey(selectedModel) : '';
   const availableModels = useSelector((state: RootState) => state.model.availableModels);
-  const serverModels = availableModels.filter(m => m.isServerModel);
+  const youdaoCloud = isYoudaoCloudEnabled();
+  const serverModels = youdaoCloud ? availableModels.filter(m => m.isServerModel) : [];
   const userModels = availableModels.filter(m => !m.isServerModel);
   const modelGroups = [
     ...(serverModels.length > 0
@@ -243,7 +283,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const visibleGroup = isGroupAvailable(activeGroup) ? activeGroup : getPreferredGroup();
   const visibleModels = shouldShowGroupTabs
     ? (visibleGroup === ModelSelectorGroup.Server ? serverModels : userModels)
-    : availableModels;
+    : (youdaoCloud ? availableModels : userModels);
   const accessibleModels = visibleModels.filter(m => m.accessible !== false);
   const restrictedModels = visibleModels.filter(m => m.accessible === false);
   // Keep the list height identical across tabs so switching never resizes the dropdown.
@@ -382,7 +422,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
   const handleModelSelect = (model: Model | null) => {
     if (disabled) return;
     if (model && model.accessible === false) {
-      setRestrictedPrompt(isLoggedIn ? ModelAccessPromptKind.Subscribe : ModelAccessPromptKind.Login);
+      if (!isYoudaoCloudEnabled()) {
+        // No Youdao portal — prompt to configure a BYO model instead.
+        setRestrictedPrompt(ModelAccessPromptKind.ConfigureModel);
+      } else {
+        setRestrictedPrompt(isLoggedIn ? ModelAccessPromptKind.Subscribe : ModelAccessPromptKind.Login);
+      }
       setHoveredModel(null);
       setIsOpen(false);
       return;

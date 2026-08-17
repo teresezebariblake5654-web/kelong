@@ -46,8 +46,12 @@ const DEFAULT_OPENCLAW_VERSION = '2026.2.23';
 const DEFAULT_GATEWAY_PORT = 18789;
 const GATEWAY_PORT_SCAN_LIMIT = 80;
 const GATEWAY_BOOT_TIMEOUT_MS = 300 * 1000;
-const GATEWAY_MAX_RESTART_ATTEMPTS = 5;
-const GATEWAY_RESTART_DELAYS = [3_000, 5_000, 10_000, 20_000, 30_000];
+/** Max automatic restarts inside GATEWAY_RESTART_WINDOW_MS (normal crashes only). */
+const GATEWAY_MAX_RESTART_ATTEMPTS = 3;
+const GATEWAY_RESTART_WINDOW_MS = 10 * 60 * 1000;
+const GATEWAY_RESTART_DELAYS = [3_000, 5_000, 10_000];
+/** Node abort / OOM-style exit on some platforms. */
+const GATEWAY_OOM_EXIT_CODES = new Set([134]);
 const OPENCLAW_GATEWAY_MAX_OLD_SPACE_MB = 4096;
 const OPENCLAW_GATEWAY_MAX_OLD_SPACE_OPTION = `--max-old-space-size=${OPENCLAW_GATEWAY_MAX_OLD_SPACE_MB}`;
 const NODE_MAX_OLD_SPACE_RE = /(?:^|\s)--max-old-space-size(?:=|\s|$)/;
@@ -77,6 +81,10 @@ export interface OpenClawEngineStatus {
   gatewayPort?: number | null;
   gatewayHttpUrl?: string | null;
   canRetry: boolean;
+  /** Recent crash reason for UI / diagnostics (never includes secrets). */
+  lastExitReason?: string;
+  recentRestartCount?: number;
+  failureKind?: OpenClawGatewayFailureKind;
 }
 
 export interface OpenClawGatewayConnectionInfo {
@@ -204,7 +212,7 @@ export function buildOpenClawGatewayExecArgv(existingNodeOptions: string | undef
 export function buildOpenClawCompileCacheEnv(compileCacheDir: string): NodeJS.ProcessEnv {
   return {
     NODE_COMPILE_CACHE: compileCacheDir,
-    // The cache is already configured by LobsterAI. Prevent the packaged
+    // The cache is already configured by Workhorse AI. Prevent the packaged
     // launcher from respawning through Electron Helper as if it were Node.
     OPENCLAW_PACKAGED_COMPILE_CACHE_RESPAWNED: '1',
   };
@@ -229,6 +237,9 @@ export class OpenClawEngineManager extends EventEmitter {
   private lastGatewayFailure: OpenClawGatewayFailureSnapshot | null = null;
   private gatewayRestartTimer: NodeJS.Timeout | null = null;
   private gatewayRestartAttempt = 0;
+  /** Timestamps of automatic restarts inside the sliding window. */
+  private gatewayRestartTimestamps: number[] = [];
+  private lastExitReason: string | undefined;
   private shutdownRequested = false;
   private gatewayPort: number | null = null;
   private startGatewayPromise: Promise<OpenClawEngineStatus> | null = null;
@@ -571,7 +582,7 @@ export class OpenClawEngineManager extends EventEmitter {
       // bundled-channel-entry contract.  Third-party plugins (in extensions/)
       // are discovered separately via plugins.load.paths in openclaw.json.
       OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(runtime.root, 'dist', 'extensions'),
-      // Disable Bonjour/mDNS LAN discovery advertising.  LobsterAI is a
+      // Disable Bonjour/mDNS LAN discovery advertising.  Workhorse AI is a
       // desktop app with a loopback-only gateway — LAN service broadcast is
       // unnecessary and its watchdog can flood stderr with re-advertise
       // warnings on Windows.  See openclaw/openclaw#33609, #63153.
@@ -607,7 +618,7 @@ export class OpenClawEngineManager extends EventEmitter {
     }
 
     // Prepend bundled/user Python runtime paths so gateway exec commands
-    // find the LobsterAI-managed Python instead of the Windows Store stub.
+    // find the Workhorse AI-managed Python instead of the Windows Store stub.
     appendPythonRuntimeToEnv(env as Record<string, string | undefined>);
 
     // Inject node/npm/npx shims so gateway exec commands can use them.
@@ -765,8 +776,10 @@ export class OpenClawEngineManager extends EventEmitter {
     console.log(`${gwDiagTs()} restartGateway: reason=${reason}, pid=${pid}, port=${this.gatewayPort ?? 'none'}`);
     console.log(`${gwDiagTs()} restartGateway: stopping existing gateway...`);
     await this.stopGateway();
-    // Reset restart counter on manual restart so user can always retry
+    // Reset restart budget on manual restart so user can always retry
     this.gatewayRestartAttempt = 0;
+    this.gatewayRestartTimestamps = [];
+    this.lastExitReason = undefined;
     console.log(`${gwDiagTs()} restartGateway: starting gateway with new env...`);
     return this.startGateway(`restart:${reason}`);
   }
@@ -782,13 +795,39 @@ export class OpenClawEngineManager extends EventEmitter {
     return this.gatewayPort ?? this.readGatewayPort();
   }
 
+  private countRecentRestarts(now = Date.now()): number {
+    this.gatewayRestartTimestamps = this.gatewayRestartTimestamps.filter(
+      (ts) => now - ts <= GATEWAY_RESTART_WINDOW_MS,
+    );
+    return this.gatewayRestartTimestamps.length;
+  }
+
   private withGatewayStatusFields(status: OpenClawEngineStatus): OpenClawEngineStatus {
     const port = status.gatewayPort ?? this.resolveStatusGatewayPort(status.phase);
     return {
       ...status,
       gatewayPort: port,
       gatewayHttpUrl: this.buildGatewayHttpUrl(port),
+      lastExitReason: status.lastExitReason ?? this.lastExitReason,
+      recentRestartCount: status.recentRestartCount ?? this.countRecentRestarts(),
+      failureKind: status.failureKind ?? this.lastGatewayFailure?.kind,
     };
+  }
+
+  /**
+   * Manual recovery after OOM: clear restart budget and start gateway again.
+   * Does not delete Cowork/SQLite session history — only resets engine restart state.
+   */
+  async recoverFromGatewayCrash(reason = 'manual-oom-recovery'): Promise<OpenClawEngineStatus> {
+    this.gatewayRestartAttempt = 0;
+    this.gatewayRestartTimestamps = [];
+    this.lastExitReason = undefined;
+    this.lastGatewayFailure = null;
+    if (this.gatewayRestartTimer) {
+      clearTimeout(this.gatewayRestartTimer);
+      this.gatewayRestartTimer = null;
+    }
+    return this.restartGateway(reason);
   }
 
   /**
@@ -984,7 +1023,7 @@ export class OpenClawEngineManager extends EventEmitter {
       }
       if (result.protectedExisting.length > 0) {
         console.warn(
-          `[OpenClaw] Skipped ${result.protectedExisting.length} worker shim(s) because existing files are not LobsterAI shims.`,
+          `[OpenClaw] Skipped ${result.protectedExisting.length} worker shim(s) because existing files are not Workhorse AI shims.`,
         );
       }
     } catch (error) {
@@ -1717,22 +1756,35 @@ export class OpenClawEngineManager extends EventEmitter {
         return;
       }
 
-      if (processFailure?.kind === OpenClawGatewayFailureKind.HeapOutOfMemory) {
+      const isOomExit =
+        processFailure?.kind === OpenClawGatewayFailureKind.HeapOutOfMemory
+        || (typeof code === 'number' && GATEWAY_OOM_EXIT_CODES.has(code));
+
+      if (isOomExit) {
+        this.lastExitReason = `heap_out_of_memory(code=${code ?? 'null'})`;
+        console.error(`${gwDiagTs()} gateway OOM/abort detected; auto-restart suppressed`);
         this.setStatus({
           phase: 'error',
           version: this.status.version,
-          message: `OpenClaw gateway ran out of JavaScript heap memory (code=${code ?? 'null'}).`,
+          message:
+            '本地 AI 引擎内存不足，已停止自动重启。请清理超大会话后手动恢复，或打开日志排查。用户对话数据不会被删除。',
+          errorCode: OpenClawEngineErrorCode.HeapOutOfMemory,
           canRetry: true,
+          lastExitReason: this.lastExitReason,
+          failureKind: OpenClawGatewayFailureKind.HeapOutOfMemory,
+          recentRestartCount: this.countRecentRestarts(),
         });
-        this.scheduleGatewayRestart();
         return;
       }
 
+      this.lastExitReason = `unexpected_exit(code=${code ?? 'null'}, signal=${signal ?? 'none'})`;
       this.setStatus({
         phase: 'error',
         version: this.status.version,
         message: `OpenClaw gateway exited unexpectedly (code=${code ?? 'null'}).`,
         canRetry: true,
+        lastExitReason: this.lastExitReason,
+        recentRestartCount: this.countRecentRestarts(),
       });
       this.scheduleGatewayRestart();
     });
@@ -1742,25 +1794,39 @@ export class OpenClawEngineManager extends EventEmitter {
     if (this.shutdownRequested) return;
     if (this.gatewayRestartTimer) return;
 
-    if (this.gatewayRestartAttempt >= GATEWAY_MAX_RESTART_ATTEMPTS) {
-      console.error(`${gwDiagTs()} gateway auto-restart limit reached (${GATEWAY_MAX_RESTART_ATTEMPTS} attempts), giving up`);
+    const recent = this.countRecentRestarts();
+    if (recent >= GATEWAY_MAX_RESTART_ATTEMPTS) {
+      console.error(
+        `${gwDiagTs()} gateway auto-restart limit reached `
+        + `(${GATEWAY_MAX_RESTART_ATTEMPTS} in ${GATEWAY_RESTART_WINDOW_MS}ms), giving up`,
+      );
+      this.lastExitReason = `restart_limit_reached(${recent})`;
       this.setStatus({
         phase: 'error',
         version: this.status.version,
-        message: `OpenClaw gateway failed to start after ${GATEWAY_MAX_RESTART_ATTEMPTS} attempts. Check model configuration or restart manually.`,
+        message:
+          `本地 AI 引擎在 10 分钟内连续崩溃 ${GATEWAY_MAX_RESTART_ATTEMPTS} 次，已停止自动重启。`
+          + '请打开日志排查，或使用「清理会话并重新启动」。',
+        errorCode: OpenClawEngineErrorCode.RestartLimitReached,
         canRetry: true,
+        lastExitReason: this.lastExitReason,
+        recentRestartCount: recent,
       });
       return;
     }
 
-    const delay = GATEWAY_RESTART_DELAYS[Math.min(this.gatewayRestartAttempt, GATEWAY_RESTART_DELAYS.length - 1)];
-    this.gatewayRestartAttempt++;
-    console.log(`${gwDiagTs()} scheduling gateway restart attempt ${this.gatewayRestartAttempt}/${GATEWAY_MAX_RESTART_ATTEMPTS} in ${delay}ms`);
+    const delay = GATEWAY_RESTART_DELAYS[Math.min(recent, GATEWAY_RESTART_DELAYS.length - 1)];
+    this.gatewayRestartAttempt = recent + 1;
+    console.log(
+      `${gwDiagTs()} scheduling gateway restart attempt ${this.gatewayRestartAttempt}/`
+      + `${GATEWAY_MAX_RESTART_ATTEMPTS} (window) in ${delay}ms`,
+    );
     console.log(`${gwDiagTs()} restart context: port=${this.gatewayPort ?? 'none'}, configPath=${this.configPath}, stateDir=${this.stateDir}`);
 
     this.gatewayRestartTimer = setTimeout(() => {
       this.gatewayRestartTimer = null;
       if (this.shutdownRequested) return;
+      this.gatewayRestartTimestamps.push(Date.now());
       void this.startGateway('auto-restart-after-crash');
     }, delay);
   }

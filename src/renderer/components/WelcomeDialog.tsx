@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { isYoudaoCloudEnabled } from '../../shared/featureFlags';
 import { i18nService } from '@/services/i18n';
 
 interface WelcomeDialogProps {
@@ -8,6 +9,8 @@ interface WelcomeDialogProps {
 }
 
 const WelcomeDialog: React.FC<WelcomeDialogProps> = ({ onLogin, onCustomModel }) => {
+  const youdaoCloud = isYoudaoCloudEnabled();
+
   return (
     <div className="fixed inset-0 z-[60] bg-surface flex items-center justify-center">
       {/* gradient overlay */}
@@ -21,7 +24,7 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({ onLogin, onCustomModel })
         {/* logo */}
         <img
           src="logo.png"
-          alt="LobsterAI"
+          alt="火星 AI"
           width={72}
           height={72}
           className="rounded-2xl mb-5 select-none"
@@ -38,47 +41,56 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({ onLogin, onCustomModel })
           {i18nService.t('welcomeSubtitle')}
         </p>
 
-        {/* action stack — login is the primary path, custom model stays visible but quiet */}
+        {/* action stack — login is the primary path when Youdao cloud is on */}
         <div className="flex flex-col w-[320px]">
-          {/* promo badge — anchored above the login button as its incentive */}
-          <div className="flex items-center gap-1.5" style={{ paddingLeft: 11, marginBottom: 10 }}>
-            <img
-              src="love.png"
-              alt=""
-              width={16}
-              height={16}
-              className="select-none shrink-0"
-              draggable={false}
-              aria-hidden="true"
-            />
-            <span className="text-sm text-secondary">{i18nService.t('welcomePromo')}</span>
-          </div>
+          {youdaoCloud && (
+            <>
+              {/* promo badge — anchored above the login button as its incentive */}
+              <div className="flex items-center gap-1.5" style={{ paddingLeft: 11, marginBottom: 10 }}>
+                <img
+                  src="love.png"
+                  alt=""
+                  width={16}
+                  height={16}
+                  className="select-none shrink-0"
+                  draggable={false}
+                  aria-hidden="true"
+                />
+                <span className="text-sm text-secondary">{i18nService.t('welcomePromo')}</span>
+              </div>
 
-          {/* primary: login — hand image overlaps its bottom-left corner */}
-          <div className="relative w-full overflow-visible">
-            <img
-              src="hand.png"
-              alt=""
-              width={41}
-              height={55}
-              className="absolute select-none pointer-events-none z-10"
-              style={{ bottom: 0, left: -8 }}
-              draggable={false}
-              aria-hidden="true"
-            />
-            <button
-              onClick={onLogin}
-              className="w-full h-11 rounded-xl text-sm font-medium text-white transition-opacity hover:opacity-90 active:opacity-80 shadow-[0_4px_14px_rgba(72,133,255,0.35)]"
-              style={{ backgroundColor: 'rgba(72, 133, 255, 1)' }}
-            >
-              {i18nService.t('welcomeLogin')}
-            </button>
-          </div>
+              {/* primary: login — hand image overlaps its bottom-left corner */}
+              <div className="relative w-full overflow-visible">
+                <img
+                  src="hand.png"
+                  alt=""
+                  width={41}
+                  height={55}
+                  className="absolute select-none pointer-events-none z-10"
+                  style={{ bottom: 0, left: -8 }}
+                  draggable={false}
+                  aria-hidden="true"
+                />
+                <button
+                  onClick={onLogin}
+                  className="w-full h-11 rounded-xl text-sm font-medium text-white transition-opacity hover:opacity-90 active:opacity-80 shadow-[0_4px_14px_rgba(72,133,255,0.35)]"
+                  style={{ backgroundColor: 'rgba(72, 133, 255, 1)' }}
+                >
+                  {i18nService.t('welcomeLogin')}
+                </button>
+              </div>
+            </>
+          )}
 
-          {/* secondary: custom model — ghost style keeps it discoverable without competing */}
+          {/* custom model — primary when Youdao cloud is off */}
           <button
             onClick={onCustomModel}
-            className="mt-3 w-full h-10 rounded-xl text-sm font-medium text-secondary border border-border bg-transparent hover:text-foreground hover:bg-surface-raised transition-colors"
+            className={`${youdaoCloud ? 'mt-3' : ''} w-full h-10 rounded-xl text-sm font-medium ${
+              youdaoCloud
+                ? 'text-secondary border border-border bg-transparent hover:text-foreground hover:bg-surface-raised'
+                : 'text-white shadow-[0_4px_14px_rgba(72,133,255,0.35)]'
+            } transition-colors`}
+            style={youdaoCloud ? undefined : { backgroundColor: 'rgba(72, 133, 255, 1)' }}
           >
             {i18nService.t('welcomeCustomModel')}
           </button>

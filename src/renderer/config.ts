@@ -1,4 +1,4 @@
-import { type ProviderConfig,ProviderRegistry } from '@shared/providers';
+import { type ProviderConfig,ProviderName, ProviderRegistry } from '@shared/providers';
 
 import {
   type BrowserWebAccessConfig,
@@ -8,6 +8,7 @@ import {
   defaultNotificationSettings,
   type NotificationSettings,
 } from '../shared/notifications/constants';
+import { isYoudaoCloudEnabled } from '../shared/featureFlags';
 
 export const ShortcutAction = {
   NewChat: 'newChat',
@@ -242,10 +243,13 @@ export const CHINA_PROVIDERS = [...ProviderRegistry.idsByRegion('china')] as con
 export const GLOBAL_PROVIDERS = ProviderRegistry.idsByRegion('global');
 
 export const getVisibleProviders = (language: 'zh' | 'en'): readonly string[] => {
-  if (language === 'zh') {
-    return [...CHINA_PROVIDERS];
+  const ids = language === 'zh'
+    ? [...CHINA_PROVIDERS]
+    : [...ProviderRegistry.idsForEnLocale()];
+  if (!isYoudaoCloudEnabled()) {
+    return ids.filter((id) => id !== ProviderName.Youdaozhiyun);
   }
-  return ProviderRegistry.idsForEnLocale();
+  return ids;
 };
 
 /**

@@ -107,7 +107,7 @@ export const findBundledExtensionsDir = (): string | null => (
 
 /**
  * Directory of OpenClaw's own runtime-bundled extensions (dist/extensions/…),
- * as opposed to the third-party dir above which holds LobsterAI-synced local
+ * as opposed to the third-party dir above which holds Workhorse AI-synced local
  * plugins. Bundled extensions surviving prune-openclaw-runtime.cjs live here.
  */
 export const findRuntimeBundledExtensionsDir = (): string | null => (
@@ -130,8 +130,11 @@ export const syncLocalOpenClawExtensionsIntoRuntime = (
     return { sourceDir: null, copied: [] };
   }
 
-  const targetExtensionsDir = path.join(runtimeRoot, THIRD_PARTY_EXTENSIONS_DIR);
+  let targetExtensionsDir = path.join(runtimeRoot, THIRD_PARTY_EXTENSIONS_DIR);
   try {
+    // Resolve junctions (e.g. vendor/openclaw-runtime/current -> win-x64) so
+    // Windows cpSync does not hit EPERM/"函数不正确" on \\?\ junction paths.
+    targetExtensionsDir = fs.realpathSync(targetExtensionsDir);
     if (!fs.statSync(targetExtensionsDir).isDirectory()) {
       return { sourceDir, copied: [] };
     }
@@ -144,12 +147,21 @@ export const syncLocalOpenClawExtensionsIntoRuntime = (
     if (!entry.isDirectory()) {
       continue;
     }
-    fs.cpSync(
-      path.join(sourceDir, entry.name),
-      path.join(targetExtensionsDir, entry.name),
-      { recursive: true, force: true },
-    );
-    copied.push(entry.name);
+    const src = path.join(sourceDir, entry.name);
+    const dest = path.join(targetExtensionsDir, entry.name);
+    try {
+      fs.cpSync(src, dest, { recursive: true, force: true });
+      copied.push(entry.name);
+    } catch (error) {
+      try {
+        fs.rmSync(dest, { recursive: true, force: true });
+        fs.cpSync(src, dest, { recursive: true, force: true });
+        copied.push(entry.name);
+      } catch (retryError) {
+        const message = retryError instanceof Error ? retryError.message : String(retryError);
+        console.warn(`[OpenClaw] skipped local extension sync for ${entry.name}: ${message}`);
+      }
+    }
   }
 
   return { sourceDir, copied };
@@ -241,7 +253,7 @@ export const findThirdPartyExtensionsDir = (): string | null => {
  * gateway's bundled-channel metadata loader.  Two locations are cleaned:
  *
  * 1. `dist/extensions/{id}` — legacy overlay installs placed plugins here.
- * 2. `extensions/{id}` — prior versions of LobsterAI installed plugins here.
+ * 2. `extensions/{id}` — prior versions of Workhorse AI installed plugins here.
  *    Because gateway-bundle.mjs runs from the package root (not dist/),
  *    `RUNNING_FROM_BUILT_ARTIFACT` is false and `resolveBundledPluginScanDir`
  *    falls back to `extensions/`.  Third-party plugins there fail the

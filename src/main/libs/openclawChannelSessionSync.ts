@@ -2,7 +2,7 @@
  * OpenClaw Channel Session Sync
  *
  * Discovers and maps sessions created by OpenClaw channel extensions (e.g. Telegram)
- * to local Cowork sessions so that conversations are visible in the LobsterAI UI.
+ * to local Cowork sessions so that conversations are visible in the Workhorse AI UI.
  */
 
 import { DeliveryMode as ScheduledTaskDeliveryMode } from '../../scheduledTask/constants';
@@ -14,8 +14,16 @@ import type { IMStore } from '../im/imStore';
 import type { Platform } from '../im/types';
 
 const LOBSTERAI_SESSION_PREFIX = 'lobsterai:';
+/** Canonical channel segment in managed desktop keys: agent:{agentId}:lobsterai:{sessionId} */
+const MANAGED_SESSION_CHANNEL = 'lobsterai';
+/** Legacy channel segment kept for older session keys. */
+const LEGACY_MANAGED_SESSION_CHANNEL = 'workhorseai';
 const FEISHU_GROUP_CHAT_ID_RE = /^oc_/i;
 export const DEFAULT_MANAGED_AGENT_ID = 'main';
+
+function isManagedSessionChannel(channel: string | undefined): boolean {
+  return channel === MANAGED_SESSION_CHANNEL || channel === LEGACY_MANAGED_SESSION_CHANNEL;
+}
 
 export interface ManagedSessionKey {
   agentId: string | null;
@@ -47,7 +55,7 @@ export function parseManagedSessionKey(
   }
 
   const parts = raw.split(':');
-  if (parts.length < 4 || parts[0] !== 'agent' || parts[2] !== 'lobsterai') {
+  if (parts.length < 4 || parts[0] !== 'agent' || !isManagedSessionChannel(parts[2])) {
     return null;
   }
 
@@ -471,9 +479,9 @@ export class OpenClawChannelSessionSync {
    * Returns the local sessionId if the sessionKey belongs to a channel, or null if not.
    */
   resolveOrCreateSession(sessionKey: string): string | null {
-    // 1. Skip LobsterAI-originated sessions
+    // 1. Skip Workhorse AI-originated sessions
     if (isManagedSessionKey(sessionKey)) {
-      console.log('[ChannelSessionSync] skipped: LobsterAI-originated session');
+      console.log('[ChannelSessionSync] skipped: Workhorse AI-originated session');
       return null;
     }
 

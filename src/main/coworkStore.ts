@@ -40,7 +40,7 @@ import {
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {
-  return path.join(os.homedir(), 'lobsterai', 'project');
+  return path.join(os.homedir(), 'workhorseai', 'project');
 };
 
 const TASK_WORKSPACE_CONTAINER_DIR = '.lobsterai-tasks';
@@ -1431,6 +1431,42 @@ export class CoworkStore {
     return rows.map(row => row.id);
   }
 
+  /** Sessions still on main that may belong to workstation (for one-shot agent_id migration). */
+  listMainAgentSessionsForWorkstationMigration(): Array<{
+    id: string;
+    title: string | null;
+    cwd: string | null;
+    agent_id: string | null;
+  }> {
+    return this.getAll<{
+      id: string;
+      title: string | null;
+      cwd: string | null;
+      agent_id: string | null;
+    }>(
+      `
+      SELECT id, title, cwd, agent_id
+      FROM cowork_sessions
+      WHERE COALESCE(NULLIF(TRIM(agent_id), ''), 'main') = 'main'
+      `,
+    );
+  }
+
+  reassignSessionAgentId(sessionId: string, agentId: string): boolean {
+    const next = agentId.trim();
+    if (!next) return false;
+    const result = this.db
+      .prepare(
+        `
+        UPDATE cowork_sessions
+        SET agent_id = ?, updated_at = ?
+        WHERE id = ? AND COALESCE(NULLIF(TRIM(agent_id), ''), 'main') = 'main'
+      `,
+      )
+      .run(next, Date.now(), sessionId);
+    return result.changes > 0;
+  }
+
   private deleteSessionRows(ids: string[]): void {
     if (ids.length === 0) return;
     const placeholders = ids.map(() => '?').join(',');
@@ -1815,7 +1851,7 @@ export class CoworkStore {
       timestamp: row.created_at,
       preview: getCoworkRailPreview(
         row.preview_content,
-        row.type === 'user' ? `Turn ${index + 1}` : 'LobsterAI',
+        row.type === 'user' ? `Turn ${index + 1}` : 'Workhorse AI',
         COWORK_RAIL_TOOLTIP_PREVIEW_MAX_LENGTH,
       ),
       contentLen: row.content_len,
@@ -2954,7 +2990,9 @@ export class CoworkStore {
     // Ensure no duplicate ID
     const existing = this.getAgent(id);
     if (existing) {
-      // Append timestamp to make unique
+      // Explicit id (e.g. workstation-hr lazy create): return the existing agent.
+      if (request.id) return existing;
+      // Name-derived slug collision: append timestamp to make unique.
       return this.createAgent({ ...request, id: `${id}-${Date.now()}` });
     }
 

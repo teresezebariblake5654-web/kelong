@@ -34,6 +34,7 @@ import {
   type CoworkPendingSteer,
   CoworkSteerStatus,
 } from '../../../shared/cowork/steer';
+import { isYoudaoCloudEnabled } from '../../../shared/featureFlags';
 import { agentService } from '../../services/agent';
 import { configService } from '../../services/config';
 import { coworkService } from '../../services/cowork';
@@ -643,6 +644,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const hasAccessibleUserModel = availableModels.some(
       model => !model.isServerModel && model.accessible !== false
     );
+    if (!isYoudaoCloudEnabled()) {
+      if (!hasAccessibleUserModel) {
+        return ModelAccessPromptKind.ConfigureModel;
+      }
+      return null;
+    }
     if (!isLoggedIn && !hasAccessibleUserModel) {
       return ModelAccessPromptKind.Login;
     }
@@ -2872,16 +2879,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   ) : null;
 
   const renderVoiceInputButton = (buttonClassName: string, iconClassName: string) => (
-    <VoiceInputButton
-      buttonClassName={buttonClassName}
-      iconClassName={iconClassName}
-      isLoggedIn={isLoggedIn}
-      disabled={disabled}
-      isQuotaExhausted={isAsrQuotaExhaustedToday}
-      isRecording={isVoiceRecording}
-      isRecognizing={isVoiceRecognizing}
-      onClick={handleVoiceInputClick}
-    />
+    isYoudaoCloudEnabled() ? (
+      <VoiceInputButton
+        buttonClassName={buttonClassName}
+        iconClassName={iconClassName}
+        isLoggedIn={isLoggedIn}
+        disabled={disabled}
+        isQuotaExhausted={isAsrQuotaExhaustedToday}
+        isRecording={isVoiceRecording}
+        isRecognizing={isVoiceRecognizing}
+        onClick={handleVoiceInputClick}
+      />
+    ) : null
   );
   const hasPromptText = Boolean(value.trim());
   const voiceRecordingUiState = getCoworkVoiceRecordingUiState({
@@ -2893,7 +2902,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const largeInputToolActions = (
     <div className={`flex items-center ${useLargeToolbarCompactLayout ? 'gap-0' : 'gap-0.5'}`}>
       {largeInputActions}
-      <MediaModelPicker draftKey={draftKey} disabled={disabled || voiceInputLocksEditing} />
+      {isYoudaoCloudEnabled() && (
+        <MediaModelPicker draftKey={draftKey} disabled={disabled || voiceInputLocksEditing} />
+      )}
     </div>
   );
   const largeSendButtonSizeClass = useCompactSendButton ? 'h-7 w-7' : 'h-8 w-8';
@@ -3405,6 +3416,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return;
     }
     setShowVoiceQuotaPrompt(false);
+    if (!isYoudaoCloudEnabled()) {
+      window.dispatchEvent(new CustomEvent('app:requestOpenSettings', {
+        detail: { initialTab: 'model' },
+      }));
+      return;
+    }
     await window.electron.shell.openExternal(getPortalPricingUrl());
   };
   const normalizedGoalEditDraft = goalEditDraft.trim();

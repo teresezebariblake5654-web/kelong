@@ -44,6 +44,13 @@ test('parseManagedSessionKey handles canonical local session keys', () => {
   });
 });
 
+test('parseManagedSessionKey still accepts legacy workhorseai channel segment', () => {
+  expect(parseManagedSessionKey('agent:main:workhorseai:abc-123')).toEqual({
+    agentId: 'main',
+    sessionId: 'abc-123',
+  });
+});
+
 test('buildManagedSessionKey emits canonical local session keys', () => {
   expect(
     buildManagedSessionKey('abc-123'),

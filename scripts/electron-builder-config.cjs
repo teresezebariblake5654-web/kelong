@@ -95,7 +95,7 @@ for (const platformName of ['mac', 'win', 'linux']) {
   mergeExtraResources(platformName);
 }
 
-// Sign every Windows binary electron-builder produces (LobsterAI.exe, the
+// Sign every Windows binary electron-builder produces (火星 AI.exe, the
 // uninstaller, the installer) through the internal Youdao signing service,
 // not just the final Setup.exe: the unsigned inner exe is what security
 // software freezes on first execution. The hook skips with a warning when
@@ -109,12 +109,12 @@ delete config.extraResources;
 
 config.dmg = {
   ...(config.dmg || {}),
-  artifactName: `LobsterAI-darwin-\${arch}-\${version}-${keyfrom}.\${ext}`,
+  artifactName: `火星 AI-darwin-\${arch}-\${version}-${keyfrom}.\${ext}`,
 };
 
 config.nsis = {
   ...(config.nsis || {}),
-  artifactName: `LobsterAI-Setup-\${arch}-\${version}-${keyfrom}.\${ext}`,
+  artifactName: `火星 AI-Setup-\${arch}-\${version}-${keyfrom}.\${ext}`,
 };
 
 if (isWebInstallerEnabled()) {
@@ -127,7 +127,7 @@ if (isWebInstallerEnabled()) {
   };
   config.nsisWeb = {
     appPackageUrl: resolveWebPackageUrl(keyfrom),
-    artifactName: `LobsterAI-WebSetup-\${arch}-\${version}-${keyfrom}.\${ext}`,
+    artifactName: `火星 AI-WebSetup-\${arch}-\${version}-${keyfrom}.\${ext}`,
   };
   console.log(`[WebInstaller] nsis-web target enabled, app package url: ${config.nsisWeb.appPackageUrl}`);
 }

@@ -133,6 +133,7 @@ model Organization {
   leadCompanies      LeadCompany[]
   leadContacts       LeadContact[]
   leadSourceRecords  LeadSourceRecord[]
+  leadScores         LeadScore[]
 }
 
 model OrganizationMember {
@@ -613,6 +614,7 @@ model LeadSearchTask {
   updatedAt          DateTime             @updatedAt
 
   sourceRecords LeadSourceRecord[]
+  scores        LeadScore[]
 
   @@index([organizationId, createdAt])
   @@index([organizationId, status])
@@ -641,6 +643,7 @@ model LeadCompany {
 
   contacts      LeadContact[]
   sourceRecords LeadSourceRecord[]
+  scores        LeadScore[]
 
   @@unique([organizationId, normalizedDomain])
   @@index([organizationId])
@@ -699,4 +702,52 @@ model LeadSourceRecord {
   @@index([companyId])
   @@index([contactId])
   @@index([provider, sourceType])
+}
+
+enum LeadScoreGrade {
+  A
+  B
+  C
+  D
+}
+
+/// Company-level ICP score for a specific search task (not stored on LeadCompany).
+/// Score dimensions are intended 0–100; enforce in scoring service (no DB triggers).
+/// Grade convention (service-layer): A=90-100, B=75-89, C=60-74, D=0-59.
+/// Do not store full page markdown or long LLM prompts here — use LeadSourceRecord for provenance.
+model LeadScore {
+  id                  String         @id @default(cuid())
+  organizationId      String
+  organization        Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  searchTaskId        String
+  searchTask          LeadSearchTask @relation(fields: [searchTaskId], references: [id], onDelete: Cascade)
+  companyId           String
+  company             LeadCompany    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  /// Overall ICP fit 0–100 (validated in scoring service).
+  overallScore        Int
+  grade               LeadScoreGrade
+  /// Dimension scores 0–100 (validated in scoring service).
+  industryScore       Int
+  locationScore       Int
+  businessTypeScore   Int
+  productFitScore     Int
+  companyFitScore     Int
+  contactabilityScore Int
+  /// Structured scoring rationale (JSON). No full prompts / markdown dumps.
+  reasoning           Json?
+  /// Structured evidence pointers / excerpts (JSON). No full page markdown.
+  evidence            Json?
+  modelProvider       String?
+  modelName           String?
+  scoringVersion      String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  @@unique([searchTaskId, companyId])
+  @@index([organizationId])
+  @@index([searchTaskId])
+  @@index([companyId])
+  @@index([overallScore])
+  @@index([grade])
+  @@index([searchTaskId, grade, overallScore])
 }

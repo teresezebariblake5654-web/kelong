@@ -1,0 +1,335 @@
+/*
+ * 过渡期业务页面工具类 — 只消费 Design Tokens，不写死颜色。
+ * 布局壳已迁移至 Tailwind；本文件服务尚未完全改造的流程页。
+ */
+
+.panel {
+  background: var(--aw-bg-elevated);
+  border: 1px solid var(--aw-border);
+  border-radius: var(--aw-radius-lg);
+  box-shadow: var(--aw-shadow-sm);
+  padding: var(--aw-space-6);
+}
+
+.panel h1,
+.panel h2 {
+  margin: 0 0 var(--aw-space-2);
+}
+
+.panel p.lead {
+  margin: 0 0 var(--aw-space-5);
+  color: var(--aw-text-secondary);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--aw-space-4);
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--aw-space-4);
+}
+
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--aw-space-4);
+}
+
+.grid-roles {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--aw-space-4);
+}
+
+.metric-card {
+  border: 1px solid var(--aw-border);
+  border-radius: var(--aw-radius-md);
+  padding: var(--aw-space-4);
+  background: var(--aw-bg-card);
+}
+
+.metric-card .label {
+  color: var(--aw-text-secondary);
+  font-size: var(--aw-fs-sm);
+}
+
+.metric-card .value {
+  margin-top: var(--aw-space-2);
+  font-size: var(--aw-fs-xl);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: var(--aw-radius-sm);
+  padding: 10px 16px;
+  cursor: pointer;
+  background: var(--aw-bg-muted);
+  color: var(--aw-text);
+}
+
+.btn:hover {
+  filter: brightness(0.98);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--aw-primary);
+  color: #ffffff;
+}
+
+.btn-primary:hover {
+  background: var(--aw-primary-hover);
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: var(--aw-border);
+}
+
+.btn-danger {
+  background: var(--aw-danger);
+  color: #ffffff;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field label {
+  font-size: var(--aw-fs-sm);
+  color: var(--aw-text-secondary);
+}
+
+.field input,
+.field select,
+.field textarea {
+  border: 1px solid var(--aw-border);
+  border-radius: var(--aw-radius-sm);
+  padding: 10px 12px;
+  background: var(--aw-bg-input);
+  color: var(--aw-text);
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: var(--aw-primary);
+}
+
+.dropzone {
+  border: 1.5px dashed var(--aw-border-strong);
+  border-radius: var(--aw-radius-lg);
+  padding: 40px 24px;
+  text-align: center;
+  background: var(--aw-bg-subtle);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.dropzone.active {
+  border-color: var(--aw-primary);
+  background: var(--aw-primary-soft);
+}
+
+.table-wrap {
+  border: 1px solid var(--aw-border);
+  border-radius: var(--aw-radius-md);
+  overflow: auto;
+  max-height: 420px;
+}
+
+table.data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--aw-fs-sm);
+}
+
+table.data-table th,
+table.data-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--aw-border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+table.data-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--aw-bg-table-head);
+  z-index: 1;
+}
+
+table.data-table td.nullish {
+  color: var(--aw-warning);
+  font-style: italic;
+}
+
+.role-card,
+.task-card,
+.plan-card {
+  border: 1px solid var(--aw-border);
+  border-radius: var(--aw-radius-md);
+  padding: var(--aw-space-4);
+  background: var(--aw-bg-elevated);
+  color: var(--aw-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.role-card.selected,
+.task-card.selected,
+.plan-card.selected {
+  border-color: var(--aw-primary);
+  box-shadow: inset 0 0 0 1px var(--aw-primary);
+  background: var(--aw-primary-soft);
+}
+
+.state-box {
+  border-radius: var(--aw-radius-md);
+  padding: var(--aw-space-4);
+  border: 1px solid var(--aw-border);
+}
+
+.state-box.error {
+  background: var(--aw-danger-soft);
+  border-color: var(--aw-danger-border);
+  color: var(--aw-danger);
+}
+
+.state-box.empty {
+  background: var(--aw-bg-subtle);
+  color: var(--aw-text-secondary);
+}
+
+.state-box.loading {
+  background: var(--aw-bg-subtle);
+  color: var(--aw-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: var(--aw-space-3);
+}
+
+.state-box.unavailable {
+  background: var(--aw-warning-soft);
+  border-color: var(--aw-warning-border);
+  color: var(--aw-warning);
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid var(--aw-border-strong);
+  border-top-color: var(--aw-primary);
+  animation: aw-spin 0.8s linear infinite;
+}
+
+@keyframes aw-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.progress-steps {
+  display: grid;
+  gap: var(--aw-space-3);
+}
+
+.progress-step {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: var(--aw-space-3);
+  align-items: start;
+}
+
+.progress-dot {
+  width: 12px;
+  height: 12px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--aw-border-strong);
+}
+
+.progress-dot.active {
+  background: var(--aw-primary);
+}
+
+.progress-dot.done {
+  background: var(--aw-success);
+}
+
+.ai-block {
+  border-left: 3px solid var(--aw-accent);
+  padding-left: var(--aw-space-4);
+  color: var(--aw-text);
+}
+
+.number-block {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--aw-font-mono);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--aw-bg-muted);
+  color: var(--aw-text-secondary);
+  font-size: var(--aw-fs-xs);
+  border: 1px solid var(--aw-border);
+}
+
+.badge.ok {
+  background: var(--aw-success-soft);
+  color: var(--aw-success);
+  border-color: var(--aw-success-border);
+}
+
+.badge.warn {
+  background: var(--aw-warning-soft);
+  color: var(--aw-warning);
+  border-color: var(--aw-warning-border);
+}
+
+.badge.danger {
+  background: var(--aw-danger-soft);
+  color: var(--aw-danger);
+  border-color: var(--aw-danger-border);
+}
+
+@media (max-width: 1400px) {
+  .grid-roles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1100px) {
+  .grid-3,
+  .grid-roles {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .grid-2,
+  .grid-3,
+  .grid-roles {
+    grid-template-columns: 1fr;
+  }
+}

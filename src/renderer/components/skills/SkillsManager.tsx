@@ -9,7 +9,7 @@ import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
 import type { SkillSecurityReport as SkillSecurityReportData } from '../../../main/libs/skillSecurity/skillSecurityTypes';
-import { ENABLE_OPENCLAW_SKILL_SYNC } from '../../../shared/featureFlags';
+import { ENABLE_OPENCLAW_SKILL_SYNC, isYoudaoCloudEnabled } from '../../../shared/featureFlags';
 import { i18nService } from '../../services/i18n';
 import { compareVersions,resolveLocalizedText, skillService } from '../../services/skill';
 import { RootState } from '../../store';
@@ -78,6 +78,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
   const [isRemoteImportOpen, setIsRemoteImportOpen] = useState(false);
   const [importTab, setImportTab] = useState<ImportSourceType>('github');
   const [activeTab, setActiveTab] = useState<SkillTab>('installed');
+  const youdaoCloud = isYoudaoCloudEnabled();
   const [marketplaceSkills, setMarketplaceSkills] = useState<MarketplaceSkill[]>([]);
   const [marketTags, setMarketTags] = useState<MarketTag[]>([]);
   const [activeMarketTag, setActiveMarketTag] = useState('all');
@@ -136,6 +137,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
   }, [dispatch]);
 
   useEffect(() => {
+    if (!isYoudaoCloudEnabled()) return;
     let isActive = true;
     setIsLoadingMarketplace(true);
     skillService.fetchMarketplaceSkills().then((data) => {
@@ -146,6 +148,12 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
     });
     return () => { isActive = false; };
   }, []);
+
+  useEffect(() => {
+    if (!isYoudaoCloudEnabled() && activeTab === 'marketplace') {
+      setActiveTab('installed');
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     if (!ENABLE_OPENCLAW_SKILL_SYNC) return;
@@ -488,14 +496,16 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
     });
 
     if (!skillCreator) {
-      // Not installed → switch to marketplace tab and search
-      setActiveTab('marketplace');
-      setSkillSearchQuery('skill-creator');
-      reportSkillAction('create_by_chat_missing_skill', {
-        source: 'skills_manager',
-        activeTab: 'marketplace',
-        skillId: 'skill-creator',
-      });
+      // Not installed → switch to marketplace tab and search (Youdao cloud only)
+      if (isYoudaoCloudEnabled()) {
+        setActiveTab('marketplace');
+        setSkillSearchQuery('skill-creator');
+        reportSkillAction('create_by_chat_missing_skill', {
+          source: 'skills_manager',
+          activeTab: 'marketplace',
+          skillId: 'skill-creator',
+        });
+      }
       window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('skillCreatorNotInstalled') }));
       return;
     }
@@ -978,6 +988,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
               activeTab === 'installed' ? 'bg-primary' : 'bg-transparent'
             }`} />
           </button>
+          {youdaoCloud && (
           <button
             type="button"
             onClick={() => {
@@ -999,7 +1010,8 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({ readOnly, onCreateByChat 
               activeTab === 'marketplace' ? 'bg-primary' : 'bg-transparent'
             }`} />
           </button>
-          {updatableSkills.length > 0 && (
+          )}
+          {youdaoCloud && updatableSkills.length > 0 && (
             <div className="ml-auto pr-1 pb-1">
               <button
                 type="button"

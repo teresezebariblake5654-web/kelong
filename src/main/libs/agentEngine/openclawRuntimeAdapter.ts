@@ -137,6 +137,7 @@ import {
   inspectOpenClawTranscriptSafety,
 } from './openclawTranscriptSafety';
 import { OpenClawTurnHistorySync } from './openclawTurnHistorySync';
+import { normalizeWorkhorseVisibleUserText } from '../../../common/workhorseOutboundPrompt';
 import {
   buildSubagentChildHistorySyncPlan,
 } from './subagent/childHistorySync';
@@ -1325,6 +1326,7 @@ const normalizeEntryText = (
 ): string => {
   let result = text.trim();
   if (!result) return result;
+  if (role === 'user') result = normalizeWorkhorseVisibleUserText(result);
   if (flags.isDiscord) result = stripDiscordMentions(result);
   if (flags.isQQ && role === 'user') result = stripQQBotSystemPrompt(result);
   if (flags.isPopo && role === 'user') result = stripPopoSystemHeader(result);
@@ -1564,7 +1566,7 @@ export function resolveOpenClawRuntimeErrorMessage(
 export type OpenClawRuntimeErrorDetailOptions = {
   /** Turn model reference ("providerId/modelId") used when gateway metadata lacks provider/model. */
   fallbackModelRef?: string;
-  /** Classifies an OpenClaw provider id back to its LobsterAI Settings entry. */
+  /** Classifies an OpenClaw provider id back to its 火星 AI Settings entry. */
   resolveModelSource?: (openclawProviderId: string) => OpenClawProviderModelSource | undefined;
 };
 
@@ -2058,7 +2060,7 @@ const buildMediaReferencePromptSection = (mediaReferences?: CoworkMediaAttachmen
   if (refs.length === 0) return '';
 
   const lines = [
-    '[LobsterAI media reference mapping]',
+    '[火星 AI media reference mapping]',
     'The current user request contains explicit @ media tokens. Treat these mappings as authoritative and do not guess which uploaded attachment a token means.',
     'When calling lobsterai_image_generate or lobsterai_video_generate, pass mapped file paths or URLs as tool arguments. Do not pass @ media tokens as image, images, firstFrame, lastFrame, referenceImages, media.url, video, or videos values.',
     'For lobsterai_image_generate, prefer image with the mapped path for one referenced image and images for multiple referenced images.',
@@ -2073,7 +2075,7 @@ const buildMediaReferencePromptSection = (mediaReferences?: CoworkMediaAttachmen
     const locations = [
       ref.localPath ? `localPath "${sanitizeMediaReferenceText(ref.localPath)}"` : '',
       ref.remoteUrl ? `remoteUrl "${sanitizeMediaReferenceText(ref.remoteUrl)}"` : '',
-      !ref.localPath && !ref.remoteUrl && ref.dataUrl ? 'dataUrl fallback available through LobsterAI host' : '',
+      !ref.localPath && !ref.remoteUrl && ref.dataUrl ? 'dataUrl fallback available through 火星 AI host' : '',
     ].filter(Boolean);
     const locationText = locations.length > 0 ? `, ${locations.join(', ')}` : '';
     lines.push(`- ${ref.token}: ${mediaType} attachment #${ref.index}, file "${sanitizeMediaReferenceText(ref.fileName)}", MIME ${sanitizeMediaReferenceText(ref.mimeType)}${locationText}.`);
@@ -2274,7 +2276,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   /** Throttle state for messageUpdate IPC emissions during streaming */
   private lastMessageUpdateEmitTime: Map<string, number> = new Map();
   private pendingMessageUpdateTimer: Map<string, ReturnType<typeof setTimeout>> = new Map();
-  private static readonly MESSAGE_UPDATE_THROTTLE_MS = 200;
+  /** Lower = snappier chat streaming (was 200ms; felt like wait-for-full). */
+  private static readonly MESSAGE_UPDATE_THROTTLE_MS = 50;
 
   /** Throttle state for SQLite store writes during streaming */
   private lastStoreUpdateTime: Map<string, number> = new Map();
@@ -2291,7 +2294,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   /**
    * Server-side agent timeout in seconds (mirrors agents.defaults.timeoutSeconds in openclaw config).
    * Used to set a client-side fallback timer that fires slightly after the server timeout,
-   * so LobsterAI can recover even when the gateway fails to deliver the abort event.
+   * so 火星 AI can recover even when the gateway fails to deliver the abort event.
    */
   agentTimeoutSeconds = OPENCLAW_AGENT_TIMEOUT_SECONDS;
   private static readonly CLIENT_TIMEOUT_GRACE_MS = 30_000;
@@ -3670,10 +3673,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
       for (const entry of extractGatewayHistoryEntries(history.messages)) {
         const mediaMetadata = entry.role === 'user' ? buildGatewayMediaMetadata(entry) : undefined;
+        const content = entry.role === 'user'
+          ? normalizeWorkhorseVisibleUserText(entry.text)
+          : entry.text;
         messages.push({
           id: `transient-${msgIndex++}`,
           type: entry.role,
-          content: entry.text,
+          content,
           timestamp: now,
           metadata: entry.role === 'assistant'
             ? { isStreaming: false, isFinal: true }
@@ -3862,7 +3868,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * Ensure the gateway WebSocket client is connected.
    * Called when IM channels (e.g. Telegram) are enabled in OpenClaw mode
    * so that channel-originated events can be received without waiting
-   * for a LobsterAI-initiated session.
+   * for a 火星 AI-initiated session.
    */
   async connectGatewayIfNeeded(): Promise<void> {
     this.gatewayReconnectSuppressed = false;
@@ -4215,7 +4221,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         clientSteerId,
         reason,
         error: reason === CoworkSteerRejectReason.RuntimeUnsupported
-          ? 'The current OpenClaw runtime does not expose same-turn steering yet. Rebuild the pinned runtime with LobsterAI patches.'
+          ? 'The current OpenClaw runtime does not expose same-turn steering yet. Rebuild the pinned runtime with 火星 AI patches.'
           : message,
       };
     }
@@ -4492,6 +4498,36 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (this.sessionModelPatchQueue.get(sessionId) === next) {
         this.sessionModelPatchQueue.delete(sessionId);
       }
+    }
+  }
+
+  private async syncSessionLabelFromCoworkTitle(options: {
+    sessionId: string;
+    sessionKey: string;
+    title?: string | null;
+  }): Promise<void> {
+    const label = String(options.title || '').replace(/\s+/g, ' ').trim();
+    if (!label || label.startsWith('[WS:')) {
+      return;
+    }
+
+    try {
+      await this.requestSessionPatchWithProfile({
+        sessionId: options.sessionId,
+        sessionKey: options.sessionKey,
+        patch: { label },
+        source: 'syncSessionLabel',
+        reason: 'sync cowork sidebar title for sessions_list search',
+        timeoutMs: OpenClawRuntimeAdapter.SESSION_PATCH_TIMEOUT_MS,
+      });
+    } catch (error) {
+      // Label sync is best-effort: older gateways or strict schemas must not
+      // block chat turns, and Chinese title search still has AGENT_RECENT_CHATS.
+      console.debug(
+        '[OpenClawRuntime] skipped cowork title label sync.',
+        `Session ${options.sessionId}.`,
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
 
@@ -4806,6 +4842,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.emit('error', sessionId, message);
       throw error;
     }
+
+    // Best-effort label sync must not delay the first model token.
+    void this.syncSessionLabelFromCoworkTitle({
+      sessionId,
+      sessionKey,
+      title: session.title,
+    });
 
     // The model sync may wait up to SESSION_PATCH_SEND_TIMEOUT_MS on a slow
     // gateway. stoppedSessions was cleared at turn start, so an entry here
@@ -5146,9 +5189,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private buildSystemPromptPrefix(systemPrompt: string): string {
     return [
-      '[LobsterAI system instructions]',
+      '[System instructions]',
       'Apply the instructions below as the highest-priority guidance for this session.',
-      'If earlier LobsterAI system instructions exist, replace them with this version.',
+      'If earlier system instructions from this app exist, replace them with this version.',
       systemPrompt,
     ].join('\n');
   }
@@ -5193,13 +5236,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     const sections = [
-      '[Context bridge from previous LobsterAI conversation]',
+      '[Context bridge from previous conversation]',
       'Use this prior context for continuity. Focus your final answer on the current request.',
     ];
 
     for (const summary of compactionSummaries) {
       sections.push(
-        '[OpenClaw compaction summary from the fork source]',
+        '[Conversation compaction summary from the fork source]',
         truncate(summary, FORK_COMPACTION_SUMMARY_MAX_CHARS),
       );
     }
@@ -5305,7 +5348,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const client = new GatewayClient({
       url: connection.url,
       token: connection.token,
-      clientDisplayName: 'LobsterAI',
+      clientDisplayName: '火星 AI',
       clientVersion: app.getVersion(),
       mode: 'backend',
       caps: [OPENCLAW_GATEWAY_TOOL_EVENTS_CAP],
@@ -5678,7 +5721,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return this.normalizeModelRef(rawCurrentModel);
   }
 
-  /** Builds the persisted error detail, annotated with the failing model's LobsterAI source. */
+  /** Builds the persisted error detail, annotated with the failing model's 火星 AI source. */
   private buildTurnErrorDetail(
     sessionId: string,
     turn: ActiveTurn | undefined,
@@ -9842,6 +9885,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // POPO's moltbot-popo plugin converts newlines to HTML break tags (<br />),
       // causing raw <br /> to appear in the UI and AI conversation.
       if (isPopo) text = text.replace(/<br\s*\/?>/gi, '\n');
+      if (role === 'user') text = normalizeWorkhorseVisibleUserText(text);
       if (isPopo && role === 'user') text = stripPopoSystemHeader(text);
       if (isDiscord) text = stripDiscordMentions(text);
       if (isQQ && role === 'user') text = stripQQBotSystemPrompt(text);
@@ -9983,7 +10027,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   /**
    * Sync user messages from gateway chat.history that haven't been added to the local store yet.
    * Used for channel-originated sessions (e.g. Telegram) where user messages arrive via the
-   * gateway rather than the LobsterAI UI.
+   * gateway rather than the 火星 AI UI.
    *
    * Called at the start of a new turn (via prefetchChannelUserMessages) so that user messages
    * appear before the assistant's streaming response. Both chat and agent events are buffered

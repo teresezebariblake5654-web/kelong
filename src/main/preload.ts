@@ -262,6 +262,8 @@ contextBridge.exposeInMainWorld('electron', {
       install: () => ipcRenderer.invoke(OpenClawEngineIpc.Install),
       retryInstall: () => ipcRenderer.invoke(OpenClawEngineIpc.RetryInstall),
       restartGateway: () => ipcRenderer.invoke(OpenClawEngineIpc.RestartGateway),
+      recoverFromCrash: () => ipcRenderer.invoke(OpenClawEngineIpc.RecoverFromCrash),
+      getGatewayLogPath: () => ipcRenderer.invoke(OpenClawEngineIpc.GetGatewayLogPath),
       repairGatewayState: () => ipcRenderer.invoke(OpenClawEngineIpc.RepairGatewayState),
       onProgress: (callback: (status: any) => void) => {
         const handler = (_event: any, status: any) => callback(status);
@@ -523,8 +525,14 @@ contextBridge.exposeInMainWorld('electron', {
       includeDeleted?: boolean;
       limit?: number;
       offset?: number;
+      agentId?: string;
     }) => ipcRenderer.invoke('cowork:memory:listEntries', input),
-    createMemoryEntry: (input: { text: string; confidence?: number; isExplicit?: boolean }) =>
+    createMemoryEntry: (input: {
+      text: string;
+      confidence?: number;
+      isExplicit?: boolean;
+      agentId?: string;
+    }) =>
       ipcRenderer.invoke('cowork:memory:createEntry', input),
     updateMemoryEntry: (input: {
       id: string;
@@ -532,12 +540,15 @@ contextBridge.exposeInMainWorld('electron', {
       confidence?: number;
       status?: 'created' | 'stale' | 'deleted';
       isExplicit?: boolean;
+      agentId?: string;
     }) => ipcRenderer.invoke('cowork:memory:updateEntry', input),
-    deleteMemoryEntry: (input: { id: string }) =>
+    deleteMemoryEntry: (input: { id: string; agentId?: string }) =>
       ipcRenderer.invoke('cowork:memory:deleteEntry', input),
-    getMemoryStats: () => ipcRenderer.invoke('cowork:memory:getStats'),
-    readMemoryFileRaw: () => ipcRenderer.invoke(CoworkIpcChannel.MemoryReadRaw),
-    writeMemoryFileRaw: (input: { content: string }) =>
+    getMemoryStats: (input?: { agentId?: string }) =>
+      ipcRenderer.invoke('cowork:memory:getStats', input),
+    readMemoryFileRaw: (input?: { agentId?: string }) =>
+      ipcRenderer.invoke(CoworkIpcChannel.MemoryReadRaw, input),
+    writeMemoryFileRaw: (input: { content: string; agentId?: string }) =>
       ipcRenderer.invoke(CoworkIpcChannel.MemoryWriteRaw, input),
     getDreamingStatus: () => ipcRenderer.invoke('cowork:dreaming:status'),
     getDreamDiary: () => ipcRenderer.invoke('cowork:dreaming:diary'),
@@ -687,6 +698,8 @@ contextBridge.exposeInMainWorld('electron', {
   clipboard: {
     writeText: (text: string) =>
       ipcRenderer.invoke(ClipboardIpc.WriteText, text),
+    readText: () =>
+      ipcRenderer.invoke(ClipboardIpc.ReadText),
     writeImageFromFile: (filePath: string) =>
       ipcRenderer.invoke(ClipboardIpc.WriteImageFromFile, filePath),
     writeImageFromDataUrl: (dataUrl: string) =>
@@ -1234,5 +1247,59 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('xai-oauth:device-code', handler);
       return () => ipcRenderer.removeListener('xai-oauth:device-code', handler);
     },
+  },
+  workstation: {
+    getUserDataPath: (departmentId?: string) =>
+      ipcRenderer.invoke('workstation:getUserDataPath', departmentId) as Promise<{
+        userData: string;
+        workstationRoot: string;
+        lobsterRoot: string;
+        departmentPath: string;
+        departmentId: string;
+      }>,
+    ensureDirs: (departmentId?: string) =>
+      ipcRenderer.invoke('workstation:ensureDirs', departmentId) as Promise<{
+        userData: string;
+        workstationRoot: string;
+        lobsterRoot: string;
+        departmentPath: string;
+        departmentId: string;
+      }>,
+    sessionUpsert: (record: {
+      productMode?: 'workstation';
+      departmentId: string;
+      workstationConversationId: string;
+      openClawSessionId: string;
+      workspacePath: string;
+      memoryNamespace: string;
+      updatedAt?: number;
+    }) => ipcRenderer.invoke('workstation:session:upsert', record),
+    sessionList: (departmentId: string) =>
+      ipcRenderer.invoke('workstation:session:list', departmentId),
+    sessionGet: (openClawSessionId: string) =>
+      ipcRenderer.invoke('workstation:session:get', openClawSessionId),
+    sessionRemove: (openClawSessionId: string) =>
+      ipcRenderer.invoke('workstation:session:remove', openClawSessionId),
+    http: (options: {
+      method?: string;
+      path: string;
+      headers?: Record<string, string>;
+      body?: string | null;
+      timeoutMs?: number;
+      multipartField?: string;
+      multipartFileName?: string;
+      bodyBase64?: string;
+      multipartExtraFields?: Record<string, string>;
+      responseType?: 'text' | 'base64';
+    }) =>
+      ipcRenderer.invoke('workstation:http', options) as Promise<{
+        success: boolean;
+        status: number;
+        ok: boolean;
+        headers?: Record<string, string>;
+        body: string;
+        bodyBase64?: string;
+        error?: string;
+      }>,
   },
 });

@@ -26,6 +26,7 @@ import {
   type CoworkSessionSummary,
 } from '../../types/cowork';
 import type { MediaGenerationSelection, MediaModel } from '../../types/mediaGeneration';
+import { isWorkstationCoworkSession } from '../../../shared/workstation/session';
 import { removeSessionFromState, removeSessionsFromState } from './coworkDeleteState';
 
 export interface DraftAttachment {
@@ -189,7 +190,7 @@ const buildRailIndexItemFromMessage = (
     timestamp: message.timestamp,
     preview: getCoworkRailPreview(
       message.content,
-      message.type === 'user' ? `Turn ${fallbackLabelIndex + 1}` : 'LobsterAI',
+      message.type === 'user' ? `Turn ${fallbackLabelIndex + 1}` : '火星 AI',
       COWORK_RAIL_TOOLTIP_PREVIEW_MAX_LENGTH,
     ),
     contentLen: message.content.length,
@@ -411,8 +412,8 @@ const coworkSlice = createSlice({
     },
 
     setSessions(state, action: PayloadAction<CoworkSessionSummary[]>) {
-      state.sessions = action.payload;
-      const validSessionIds = new Set(action.payload.map((session) => session.id));
+      state.sessions = action.payload.filter((session) => !isWorkstationCoworkSession(session));
+      const validSessionIds = new Set(state.sessions.map((session) => session.id));
       state.unreadSessionIds = state.unreadSessionIds.filter((id) => {
         return validSessionIds.has(id) && id !== state.currentSessionId;
       });
@@ -425,7 +426,9 @@ const coworkSlice = createSlice({
     appendSessions(state, action: PayloadAction<{ sessions: CoworkSessionSummary[]; hasMore: boolean }>) {
       const { sessions, hasMore } = action.payload;
       const existingIds = new Set(state.sessions.map(s => s.id));
-      const newSessions = sessions.filter(s => !existingIds.has(s.id));
+      const newSessions = sessions.filter(
+        (s) => !existingIds.has(s.id) && !isWorkstationCoworkSession(s),
+      );
       state.sessions = [...state.sessions, ...newSessions];
       state.hasMoreSessions = hasMore;
     },
@@ -437,6 +440,10 @@ const coworkSlice = createSlice({
 
     setCurrentSession(state, action: PayloadAction<CoworkSession | null>) {
       state.sessionNavigationTargetId = null;
+      if (action.payload && isWorkstationCoworkSession(action.payload)) {
+        // Workstation sessions must never become Agent currentSession / sidebar history.
+        return;
+      }
       if (action.payload) {
         const session = action.payload;
         // Ensure pagination fields are always present (guard against stale IPC data).
@@ -598,6 +605,9 @@ const coworkSlice = createSlice({
     },
 
     addSession(state, action: PayloadAction<CoworkSession>) {
+      if (isWorkstationCoworkSession(action.payload)) {
+        return;
+      }
       const summary = toSessionSummary(action.payload);
       state.sessions.unshift(summary);
       state.currentSession = {

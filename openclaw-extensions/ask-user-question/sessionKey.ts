@@ -1,6 +1,6 @@
 const LEGACY_LOBSTERAI_SESSION_PREFIX = 'lobsterai:';
 const AGENT_SESSION_PREFIX = 'agent:';
-const LOBSTERAI_SESSION_MARKER = 'lobsterai';
+const LOBSTERAI_SESSION_MARKER = 'workhorseai';
 const SUBAGENT_SESSION_MARKER = 'subagent';
 
 export function isAskUserQuestionCandidateSessionKey(sessionKey: string | undefined | null): boolean {

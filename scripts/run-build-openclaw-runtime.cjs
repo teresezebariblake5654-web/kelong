@@ -27,7 +27,11 @@ function resolveBashExecutable(rootDir) {
     });
     if (result.status === 0 && result.stdout) {
       const paths = result.stdout.trim().split(/\r?\n/).map(p => p.trim()).filter(Boolean);
-      const gitBash = paths.find(p => !p.toLowerCase().includes('windowsapps'));
+      // Skip WSL stubs: WindowsApps\bash.exe and System32\bash.exe both open WSL.
+      const gitBash = paths.find((p) => {
+        const lower = p.toLowerCase();
+        return !lower.includes('windowsapps') && !lower.includes('\\system32\\') && !lower.includes('/system32/');
+      });
       if (gitBash) return gitBash;
     }
   } catch {}

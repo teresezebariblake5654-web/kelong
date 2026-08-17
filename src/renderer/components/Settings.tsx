@@ -14,8 +14,13 @@ import {
   normalizeNotificationSettings,
   TaskCompletionNotificationMode,
 } from '../../shared/notifications/constants';
-import { OpenClawEnginePhase, OpenClawGatewayRepairErrorCode } from '../../shared/openclawEngine/constants';
+import {
+  OpenClawEngineErrorCode,
+  OpenClawEnginePhase,
+  OpenClawGatewayRepairErrorCode,
+} from '../../shared/openclawEngine/constants';
 import { ProviderAuthType, ProviderName, ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
+import { isYoudaoCloudEnabled, isImBotEnabled } from '../../shared/featureFlags';
 import { type AppConfig, defaultConfig, FontPreferences, getProviderDisplayName, getVisibleProviders, normalizeFontPreference, ShortcutAction, type ShortcutConfig } from '../config';
 import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
 import { useSkin } from '../providers/SkinProvider';
@@ -823,7 +828,9 @@ const SHORTCUT_COMMAND_GROUPS: Array<{
   },
   {
     titleKey: 'shortcutGroupSettingsTabs',
-    commands: SETTINGS_TAB_SHORTCUT_COMMANDS,
+    commands: SETTINGS_TAB_SHORTCUT_COMMANDS.filter(
+      (command) => isImBotEnabled() || command.key !== ShortcutAction.OpenSettingsIm,
+    ),
   },
 ];
 
@@ -942,7 +949,7 @@ interface ProvidersImportPayload {
   providers?: Record<string, ProvidersImportEntry>;
 }
 
-const ABOUT_CONTACT_EMAIL = 'lobsterai.project@rd.netease.com';
+const ABOUT_CONTACT_EMAIL = 'support@workhorse.ai';
 const ABOUT_USER_MANUAL_URL = 'https://lobsterai.youdao.com/#/docs/lobsterai_user_manual';
 const ABOUT_USER_COMMUNITY_URL = 'https://lobsterai.youdao.com/#/about';
 const ABOUT_SERVICE_TERMS_URL = 'https://c.youdao.com/dict/hardware/lobsterai/lobsterai_service.html';
@@ -1710,6 +1717,7 @@ const Settings: React.FC<SettingsProps> = ({
   }, [isExportingLogs]);
 
   const coworkConfig = useSelector(selectCoworkConfig);
+  const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
 
   const [coworkAgentEngine, setCoworkAgentEngine] = useState<CoworkAgentEngine>(coworkConfig.agentEngine || 'openclaw');
   const [coworkMemoryEnabled, setCoworkMemoryEnabled] = useState<boolean>(coworkConfig.memoryEnabled ?? true);
@@ -2047,7 +2055,7 @@ const Settings: React.FC<SettingsProps> = ({
               baseUrl: config.api.baseUrl
             }
           }));
-        } else if (normalizedApiBaseUrl.includes('openapi.youdao.com')) {
+        } else if (isYoudaoCloudEnabled() && normalizedApiBaseUrl.includes('openapi.youdao.com')) {
           setActiveProvider('youdaozhiyun');
           setProviders(prev => ({
             ...prev,
@@ -3077,8 +3085,9 @@ const Settings: React.FC<SettingsProps> = ({
       const [entries, stats] = await Promise.all([
         coworkService.listMemoryEntries({
           query: coworkMemoryQuery.trim() || undefined,
+          agentId: currentAgentId,
         }),
-        coworkService.getMemoryStats(),
+        coworkService.getMemoryStats({ agentId: currentAgentId }),
       ]);
       setCoworkMemoryEntries(entries);
       setCoworkMemoryStats(stats);
@@ -3091,6 +3100,7 @@ const Settings: React.FC<SettingsProps> = ({
     }
   }, [
     coworkMemoryQuery,
+    currentAgentId,
   ]);
 
   useEffect(() => {
@@ -3115,10 +3125,12 @@ const Settings: React.FC<SettingsProps> = ({
         await coworkService.updateMemoryEntry({
           id: coworkMemoryEditingId,
           text,
+          agentId: currentAgentId,
         });
       } else {
         await coworkService.createMemoryEntry({
           text,
+          agentId: currentAgentId,
         });
       }
       resetCoworkMemoryEditor();
@@ -3145,7 +3157,7 @@ const Settings: React.FC<SettingsProps> = ({
   const handleDeleteCoworkMemoryEntry = async (entry: CoworkUserMemoryEntry) => {
     setCoworkMemoryListLoading(true);
     try {
-      await coworkService.deleteMemoryEntry({ id: entry.id });
+      await coworkService.deleteMemoryEntry({ id: entry.id, agentId: currentAgentId });
       if (coworkMemoryEditingId === entry.id) {
         resetCoworkMemoryEditor();
       }
@@ -3168,7 +3180,7 @@ const Settings: React.FC<SettingsProps> = ({
 
   const handleEnterCoworkMemoryRawMode = async () => {
     setError(null);
-    const content = await coworkService.readMemoryFileRaw();
+    const content = await coworkService.readMemoryFileRaw({ agentId: currentAgentId });
     if (content === null) {
       setError(i18nService.t('coworkMemoryRawLoadFailed'));
       return;
@@ -3182,7 +3194,9 @@ const Settings: React.FC<SettingsProps> = ({
     setError(null);
     setCoworkMemoryRawSaving(true);
     try {
-      const result = await coworkService.writeMemoryFileRaw(coworkMemoryRawText);
+      const result = await coworkService.writeMemoryFileRaw(coworkMemoryRawText, {
+        agentId: currentAgentId,
+      });
       if (!result.success) {
         setError(result.error || i18nService.t('coworkMemoryRawSaveFailed'));
         return;
@@ -4415,11 +4429,21 @@ const Settings: React.FC<SettingsProps> = ({
     // Filter out tabs with 'hide' action in enterprise config
     // e.g., ui: { "settings.im": "hide" } → hide the 'im' tab
     const ui = enterpriseConfig?.ui;
-    if (ui) {
-      return allTabs.filter(tab => ui[`settings.${tab.key}`] !== 'hide');
+    let tabs = allTabs;
+    if (!isImBotEnabled()) {
+      tabs = tabs.filter(tab => tab.key !== 'im');
     }
-    return allTabs;
+    if (ui) {
+      tabs = tabs.filter(tab => ui[`settings.${tab.key}`] !== 'hide');
+    }
+    return tabs;
   })();
+
+  useEffect(() => {
+    if (!isImBotEnabled() && activeTab === 'im') {
+      setActiveTab('general');
+    }
+  }, [activeTab]);
 
   const activeTabLabel = useMemo(() => {
     return sidebarTabs.find(t => t.key === activeTab)?.label ?? '';
@@ -5005,6 +5029,47 @@ const Settings: React.FC<SettingsProps> = ({
                                 className={`h-full rounded-full transition-all ${openClawStatusTone.progressClassName}`}
                                 style={{ width: `${openClawProgressPercent}%` }}
                               />
+                            </div>
+                          </div>
+                        )}
+
+                        {(
+                          openClawEngineStatus?.errorCode === OpenClawEngineErrorCode.HeapOutOfMemory
+                          || openClawEngineStatus?.errorCode === OpenClawEngineErrorCode.RestartLimitReached
+                        ) && (
+                          <div className="mt-3 space-y-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2.5 text-sm text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-200">
+                            <div className="font-medium">
+                              {openClawEngineStatus.errorCode === OpenClawEngineErrorCode.HeapOutOfMemory
+                                ? i18nService.t('openClawOomRecoveryTitle')
+                                : i18nService.t('openClawRestartLimitTitle')}
+                            </div>
+                            <p className="text-[13px] leading-5 opacity-90">
+                              {openClawEngineStatus.message
+                                || i18nService.t('openClawOomRecoveryDesc')}
+                            </p>
+                            {openClawEngineStatus.lastExitReason && (
+                              <p className="font-mono text-[11px] opacity-80">
+                                {openClawEngineStatus.lastExitReason}
+                                {typeof openClawEngineStatus.recentRestartCount === 'number'
+                                  ? ` · restarts=${openClawEngineStatus.recentRestartCount}`
+                                  : ''}
+                              </p>
+                            )}
+                            <div className="flex flex-wrap gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => { void coworkService.recoverOpenClawGatewayFromCrash(); }}
+                                className="inline-flex h-8 items-center justify-center rounded-lg border border-current/30 px-3 text-xs font-medium transition-colors hover:bg-current/10"
+                              >
+                                {i18nService.t('openClawOomRecoverAction')}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { void coworkService.revealOpenClawGatewayLog(); }}
+                                className="inline-flex h-8 items-center justify-center rounded-lg border border-current/30 px-3 text-xs font-medium transition-colors hover:bg-current/10"
+                              >
+                                {i18nService.t('openClawOomOpenLogsAction')}
+                              </button>
                             </div>
                           </div>
                         )}
@@ -5637,7 +5702,7 @@ const Settings: React.FC<SettingsProps> = ({
             {/* Logo & App Name */}
             <img
               src="logo.png"
-              alt="LobsterAI"
+              alt="火星 AI"
               className="w-16 h-16 mb-3 cursor-pointer select-none"
               onClick={(e) => {
                 if (!e.altKey || !e.shiftKey) return;
@@ -5649,7 +5714,7 @@ const Settings: React.FC<SettingsProps> = ({
                 }
               }}
             />
-            <h3 className="text-lg font-semibold text-foreground">LobsterAI</h3>
+            <h3 className="text-lg font-semibold text-foreground">火星 AI</h3>
             <span className="text-xs text-secondary mt-1">v{appVersion}</span>
 
             {/* Info Card */}
@@ -5658,7 +5723,7 @@ const Settings: React.FC<SettingsProps> = ({
                 <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutVersion')}</span>
                 <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
                   <span className="text-sm text-secondary">{appVersion}</span>
-                  {!enterpriseConfig?.disableUpdate && (
+                  {!enterpriseConfig?.disableUpdate && isYoudaoCloudEnabled() && (
                   <button
                     type="button"
                     disabled={updateCheckStatus === 'checking' || updateCheckStatus === 'downloading'}
@@ -5699,6 +5764,7 @@ const Settings: React.FC<SettingsProps> = ({
                   )}
                 </div>
               </div>
+              {isYoudaoCloudEnabled() && (
               <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-border">
                 <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutUserCommunity')}</span>
                 <button
@@ -5712,6 +5778,8 @@ const Settings: React.FC<SettingsProps> = ({
                   {ABOUT_USER_COMMUNITY_URL}
                 </button>
               </div>
+              )}
+              {isYoudaoCloudEnabled() && (
               <div className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3${testModeUnlocked ? ' border-b border-border' : ''}`}>
                 <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutUserManual')}</span>
                 <button
@@ -5725,6 +5793,7 @@ const Settings: React.FC<SettingsProps> = ({
                   {ABOUT_USER_MANUAL_URL}
                 </button>
               </div>
+              )}
               {testModeUnlocked && (
                 <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
                   <span className="shrink-0 text-sm text-foreground">{i18nService.t('testMode')}</span>
@@ -5750,6 +5819,8 @@ const Settings: React.FC<SettingsProps> = ({
             {/* Footer */}
             <div className="mt-auto w-full pt-14 pb-2 flex flex-col items-center">
               <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-sm text-secondary">
+                {isYoudaoCloudEnabled() && (
+                <>
                 <button
                   type="button"
                   onClick={(e) => {
@@ -5761,6 +5832,8 @@ const Settings: React.FC<SettingsProps> = ({
                   {i18nService.t('aboutServiceTerms')}
                 </button>
                 <span className="text-xs opacity-40">|</span>
+                </>
+                )}
                 <button
                   type="button"
                   onClick={(e) => {
@@ -5778,7 +5851,7 @@ const Settings: React.FC<SettingsProps> = ({
                 {i18nService.t('copyrightHolder')}
               </p>
               <p className="mt-1 text-center text-xs text-secondary">
-                Copyright &copy; {new Date().getFullYear()} NetEase Youdao. All Rights Reserved.
+                Copyright &copy; {new Date().getFullYear()} 火星 AI. All Rights Reserved.
               </p>
             </div>
           </div>

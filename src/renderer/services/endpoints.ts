@@ -20,8 +20,8 @@ export const getManualUpdateCheckUrl = () => isTestModeEnabled()
   : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/update-manual';
 
 export const getFallbackDownloadUrl = () => isTestModeEnabled()
-  ? 'https://lobsterai.inner.youdao.com/#/download-list'
-  : 'https://lobsterai.youdao.com/#/download-list';
+  ? 'https://bx-aigc.com/#/download-list'
+  : 'https://bx-aigc.com/#/download-list';
 
 // Skill 商店
 export const getSkillStoreUrl = () => isTestModeEnabled()
