@@ -16,9 +16,11 @@ import {
 import { createLeadQueueRedis } from '../queues/lead-queue.redis';
 import { executeLeadDiscoveryTask } from '../services/leads/lead-discovery-run.service';
 import { leadPersistenceService } from '../services/leads/lead-persistence.service';
+import { isLeadTaskCancelledError } from '../services/leads/lead-task-cancelled.error';
 
 export function isUnrecoverableLeadDiscoveryError(err: unknown): boolean {
   if (err instanceof UnrecoverableError) return true;
+  if (isLeadTaskCancelledError(err)) return true;
   if (err instanceof AppError) {
     return err.statusCode < 500 && err.statusCode !== 408 && err.statusCode !== 429;
   }
@@ -39,6 +41,17 @@ export async function handleLeadDiscoveryJobFailed(
   err: unknown,
 ): Promise<boolean> {
   if (!job) return false;
+
+  // Cancelled tasks are terminal — never route through failSearchTask / FAILED.
+  if (isLeadTaskCancelledError(err)) {
+    logger.info('lead_discovery_job_cancelled', {
+      jobId: job.id,
+      taskId: job.data.taskId,
+      attemptsMade: job.attemptsMade,
+    });
+    return true;
+  }
+
   const maxAttempts = job.opts.attempts ?? LEAD_DISCOVERY_JOB_ATTEMPTS;
   const final = isFinalLeadDiscoveryFailure(job.attemptsMade, maxAttempts, err);
   if (!final) {
@@ -74,12 +87,12 @@ export async function processLeadDiscoveryJob(
     throw new UnrecoverableError('Invalid lead discovery job payload');
   }
 
-  const { taskId, organizationId, query, maxCandidates } = parsed.data;
+  const { taskId, organizationId, query, targetCount, researchLimit, maxCandidates } = parsed.data;
   logger.info('lead_discovery_job_start', {
     jobId: job.id,
     taskId,
     organizationId,
-    maxCandidates,
+    targetCount: targetCount ?? maxCandidates,
   });
 
   try {
@@ -87,6 +100,8 @@ export async function processLeadDiscoveryJob(
       taskId,
       organizationId,
       query,
+      targetCount,
+      researchLimit,
       maxCandidates,
     });
   } catch (err) {

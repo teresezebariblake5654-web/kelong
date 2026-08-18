@@ -19,11 +19,33 @@ export const leadDiscoveryJobDataSchema = z
     taskId: z.string().min(1),
     organizationId: z.string().min(1),
     query: z.string().min(1).max(500),
-    maxCandidates: z.number().int().min(1).max(5),
+    targetCount: z.number().int().min(1).max(500).optional(),
+    researchLimit: z.number().int().min(1).max(50).optional(),
+    /** @deprecated prefer targetCount — kept for older queued jobs */
+    maxCandidates: z.number().int().min(1).max(5).optional(),
   })
-  .strict();
+  .strip()
+  .superRefine((data, ctx) => {
+    if (data.targetCount == null && data.maxCandidates == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['targetCount'],
+        message: 'Required',
+      });
+    }
+  });
 
 export type LeadDiscoveryJobData = z.infer<typeof leadDiscoveryJobDataSchema>;
+
+export function resolveJobTargetCount(data: Pick<LeadDiscoveryJobData, 'targetCount' | 'maxCandidates'>): number {
+  return data.targetCount ?? data.maxCandidates ?? 1;
+}
+
+export function resolveJobResearchLimit(
+  data: Pick<LeadDiscoveryJobData, 'researchLimit'>,
+): number {
+  return data.researchLimit ?? env.leadAgentMaxResearchCompanies;
+}
 
 export type LeadDiscoveryQueueLike = {
   add: (
@@ -46,7 +68,7 @@ export function getLeadDiscoveryQueueName(): string {
 
 function getProducerRedis(): Redis {
   if (!producerRedis) {
-    producerRedis = createLeadQueueRedis();
+    producerRedis = createLeadQueueRedis('producer');
   }
   return producerRedis;
 }
@@ -86,16 +108,27 @@ export async function enqueueLeadDiscoveryJob(
 ): Promise<{ jobId: string; duplicated: boolean }> {
   const parsed = leadDiscoveryJobDataSchema.parse(data);
   const jobId = leadDiscoveryJobId(parsed.taskId);
+  const normalized: LeadDiscoveryJobData = {
+    ...parsed,
+    targetCount: resolveJobTargetCount(parsed),
+    researchLimit: resolveJobResearchLimit(parsed),
+    maxCandidates: undefined,
+  };
 
   try {
-    await queueClient.add(LEAD_DISCOVERY_JOB_NAME, parsed, {
-      jobId,
-      attempts: LEAD_DISCOVERY_JOB_ATTEMPTS,
-      backoff: {
-        type: 'exponential',
-        delay: LEAD_DISCOVERY_JOB_BACKOFF_MS,
-      },
-    });
+    await Promise.race([
+      queueClient.add(LEAD_DISCOVERY_JOB_NAME, normalized, {
+        jobId,
+        attempts: LEAD_DISCOVERY_JOB_ATTEMPTS,
+        backoff: {
+          type: 'exponential',
+          delay: LEAD_DISCOVERY_JOB_BACKOFF_MS,
+        },
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('LEAD_QUEUE_UNAVAILABLE')), 4_000),
+      ),
+    ]);
     return { jobId, duplicated: false };
   } catch (err) {
     if (isDuplicateJobIdError(err)) {
@@ -114,4 +147,21 @@ export async function closeLeadDiscoveryQueue(): Promise<void> {
     await producerRedis.quit();
     producerRedis = null;
   }
+}
+
+/**
+ * Cancel helper: remove queued (waiting/delayed) discovery job if still inactive.
+ * Does not interrupt an actively running worker job.
+ */
+export async function removeLeadDiscoveryJobIfInactive(taskId: string): Promise<boolean> {
+  const q = getLeadDiscoveryQueue();
+  const jobId = leadDiscoveryJobId(taskId);
+  const job = await q.getJob(jobId);
+  if (!job) return false;
+  const state = await job.getState();
+  if (state === 'waiting' || state === 'delayed' || state === 'prioritized' || state === 'waiting-children') {
+    await job.remove();
+    return true;
+  }
+  return false;
 }

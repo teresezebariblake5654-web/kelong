@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { connectDatabase, disconnectDatabase, prisma } from '../src/config/database';
 import type { DiscoveryPreviewResult } from '../src/services/leads/lead-discovery.service';
-import * as discoveryMod from '../src/services/leads/lead-discovery.service';
+import * as agentMod from '../src/services/leads/agent/acquisition-agent-orchestrator.service';
+import { ACQUISITION_AGENT_VERSION } from '../src/services/leads/agent/acquisition-agent.types';
+import type { AcquisitionAgentRunResult } from '../src/services/leads/agent/acquisition-agent-orchestrator.service';
 import {
   leadPersistenceService,
   mergeStringField,
@@ -10,6 +12,22 @@ import {
   persistDiscoveryResult,
 } from '../src/services/leads/lead-persistence.service';
 import { leadDiscoveryRunService } from '../src/services/leads/lead-discovery-run.service';
+
+function wrapAgent(discovery: DiscoveryPreviewResult): AcquisitionAgentRunResult {
+  return {
+    discovery,
+    agentSummary: {
+      version: ACQUISITION_AGENT_VERSION,
+      requestedTarget: 1,
+      effectiveResearchLimit: 1,
+      plan: { queryCount: 3, source: 'fallback' },
+      executedQueries: [],
+      searchRounds: 1,
+      uniqueCandidates: discovery.stats.uniqueDomains,
+      stopReason: 'TARGET_REACHED',
+    },
+  };
+}
 
 function sampleDiscovery(overrides?: Partial<DiscoveryPreviewResult>): DiscoveryPreviewResult {
   return {
@@ -430,7 +448,7 @@ describe('lead persistence (postgres)', () => {
 
   it('executeLeadDiscoveryTask keeps RUNNING on first system error (retries still possible)', async () => {
     const spy = vi
-      .spyOn(discoveryMod.leadDiscoveryService, 'runDiscoveryPreview')
+      .spyOn(agentMod.acquisitionAgentOrchestrator, 'run')
       .mockRejectedValueOnce(new Error('searxng down'));
 
     try {
@@ -455,29 +473,31 @@ describe('lead persistence (postgres)', () => {
 
   it('runLeadDiscovery COMPLETED path with mocked discovery does not invent emails', async () => {
     const uniqueDomain = `run-path-${suffix}.test`;
-    const spy = vi.spyOn(discoveryMod.leadDiscoveryService, 'runDiscoveryPreview').mockResolvedValue(
-      sampleDiscovery({
-        companies: [
-          {
-            ...sampleDiscovery().companies[0],
-            domain: uniqueDomain,
-            website: `https://${uniqueDomain}/`,
-            researchedPages: [`https://${uniqueDomain}/`],
-            contacts: {
-              emails: [
-                {
-                  email: `a@${uniqueDomain}`,
-                  verification: { status: 'valid', score: 1 },
-                },
-              ],
-              phones: [{ phone: '111' }],
-              linkedin: [],
-              facebook: [],
-              instagram: [],
+    const spy = vi.spyOn(agentMod.acquisitionAgentOrchestrator, 'run').mockResolvedValue(
+      wrapAgent(
+        sampleDiscovery({
+          companies: [
+            {
+              ...sampleDiscovery().companies[0],
+              domain: uniqueDomain,
+              website: `https://${uniqueDomain}/`,
+              researchedPages: [`https://${uniqueDomain}/`],
+              contacts: {
+                emails: [
+                  {
+                    email: `a@${uniqueDomain}`,
+                    verification: { status: 'valid', score: 1 },
+                  },
+                ],
+                phones: [{ phone: '111' }],
+                linkedin: [],
+                facebook: [],
+                instagram: [],
+              },
             },
-          },
-        ],
-      }),
+          ],
+        }),
+      ),
     );
 
     try {

@@ -6,6 +6,7 @@
  */
 import { connectDatabase, disconnectDatabase } from '../config/database';
 import { env } from '../config/env';
+import { initLlmRuntimeFromEnv } from '../providers/llm';
 import { closeLeadDiscoveryQueue } from '../queues/lead-discovery.queue';
 import { logger } from '../utils/logger';
 import {
@@ -16,6 +17,7 @@ import {
 const SHUTDOWN_TIMEOUT_MS = 60_000;
 
 async function main() {
+  initLlmRuntimeFromEnv();
   await connectDatabase();
 
   const worker = createLeadDiscoveryWorker();

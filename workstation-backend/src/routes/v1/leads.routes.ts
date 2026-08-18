@@ -8,7 +8,13 @@ router.use(requireAuth);
 router.post('/discovery-preview', requireOrganization, leadsController.discoveryPreview);
 /** Create PENDING task + enqueue; worker executes discovery asynchronously. */
 router.post('/discovery', requireOrganization, leadsController.discovery);
-/** ICP scoring for an existing SearchTask (not auto-chained to discovery). */
+router.get('/provider-health', requireOrganization, leadsController.providerHealth);
+router.post(
+  '/search-tasks/:taskId/cancel',
+  requireOrganization,
+  leadsController.cancelSearchTask,
+);
+/** Manual ICP rescore for an existing SearchTask (auto-score still runs after discovery). */
 router.post(
   '/search-tasks/:taskId/score',
   requireOrganization,

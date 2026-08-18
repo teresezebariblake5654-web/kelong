@@ -1,5 +1,5 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { env } from '../config/env';
 
 const RATE_LIMITED_BODY = {
@@ -22,63 +22,74 @@ function withRateLimitGate(handler: RequestHandler): RequestHandler {
   };
 }
 
-function userOrIpKey(req: Request): string {
+/** IPv6-safe key: prefer user id; otherwise official ipKeyGenerator. */
+export function userOrIpKey(req: Request): string {
   const userId = req.user?.id?.trim();
   if (userId) return `user:${userId}`;
-  return `ip:${req.ip || req.socket.remoteAddress || 'unknown'}`;
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  try {
+    return `ip:${ipKeyGenerator(ip)}`;
+  } catch {
+    return `ip:${ip}`;
+  }
+}
+
+function buildLimiter(opts: {
+  windowMs: number;
+  max: number;
+  keyGenerator?: typeof userOrIpKey;
+}): RequestHandler {
+  // Only construct express-rate-limit when enabled — avoids IPv6 validation noise at boot
+  // when RATE_LIMIT_ENABLED=false.
+  if (!env.rateLimitEnabled) {
+    return passthrough;
+  }
+  return rateLimit({
+    windowMs: opts.windowMs,
+    max: opts.max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    ...(opts.keyGenerator ? { keyGenerator: opts.keyGenerator } : {}),
+    message: RATE_LIMITED_BODY,
+  });
 }
 
 export const authRateLimiter = withRateLimitGate(
-  rateLimit({
+  buildLimiter({
     windowMs: env.authRateLimitWindowMs,
     max: env.authRateLimitMax,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: RATE_LIMITED_BODY,
   }),
 );
 
 export const aiRateLimiter = withRateLimitGate(
-  rateLimit({
+  buildLimiter({
     windowMs: env.aiRateLimitWindowMs,
     max: env.aiRateLimitMax,
-    standardHeaders: true,
-    legacyHeaders: false,
     keyGenerator: userOrIpKey,
-    message: RATE_LIMITED_BODY,
   }),
 );
 
 export const chatRateLimiter = withRateLimitGate(
-  rateLimit({
+  buildLimiter({
     windowMs: env.chatRateLimitWindowMs,
     max: env.chatRateLimitMax,
-    standardHeaders: true,
-    legacyHeaders: false,
     keyGenerator: userOrIpKey,
-    message: RATE_LIMITED_BODY,
   }),
 );
 
 export const feedbackRateLimiter = withRateLimitGate(
-  rateLimit({
+  buildLimiter({
     windowMs: env.feedbackRateLimitWindowMs,
     max: env.feedbackRateLimitMax,
-    standardHeaders: true,
-    legacyHeaders: false,
     keyGenerator: userOrIpKey,
-    message: RATE_LIMITED_BODY,
   }),
 );
 
 export const uploadRateLimiter = withRateLimitGate(
-  rateLimit({
+  buildLimiter({
     windowMs: env.uploadRateLimitWindowMs,
     max: env.uploadRateLimitMax,
-    standardHeaders: true,
-    legacyHeaders: false,
     keyGenerator: userOrIpKey,
-    message: RATE_LIMITED_BODY,
   }),
 );
 

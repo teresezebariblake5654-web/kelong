@@ -1,19 +1,38 @@
 import { AppError } from '../../utils/errors';
+import { env } from '../../config/env';
 import { searxngProvider } from '../../providers/lead-engines/searxng.provider';
 import { firecrawlProvider } from '../../providers/lead-engines/firecrawl.provider';
 import { keeleadProvider } from '../../providers/lead-engines/keelead.provider';
 import type { LeadProviderError, SearxngSearchHit } from '../../providers/lead-engines/lead-provider.types';
+import { mapWithConcurrency } from '../../utils/map-with-concurrency';
+import { isLeadTaskCancelledError, LeadTaskCancelledError } from './lead-task-cancelled.error';
 import {
   extractContactsFromText,
   mergeExtractedContacts,
   type ExtractedContacts,
 } from './lead-normalizer.service';
 
-const SEARCH_CANDIDATE_CAP = 20;
+export const SEARCH_CANDIDATE_CAP = 20;
 const DEFAULT_MAX_RESEARCH = 5;
 const MAX_RESEARCH_HARD = 5;
 const MAX_EMAILS_PER_COMPANY = 3;
 const MAX_PAGES_PER_COMPANY = 3;
+export const LEAD_RESEARCH_CONCURRENCY_HARD_MAX = 5;
+export const LEAD_EMAIL_VERIFY_CONCURRENCY_HARD_MAX = 8;
+
+export function resolveResearchConcurrency(): number {
+  return Math.min(
+    Math.max(env.leadResearchConcurrency || 3, 1),
+    LEAD_RESEARCH_CONCURRENCY_HARD_MAX,
+  );
+}
+
+export function resolveEmailVerifyConcurrency(): number {
+  return Math.min(
+    Math.max(env.leadEmailVerifyConcurrency || 5, 1),
+    LEAD_EMAIL_VERIFY_CONCURRENCY_HARD_MAX,
+  );
+}
 const MARKDOWN_PREVIEW_CHARS = 1200;
 
 const COMMON_CONTACT_PATHS = ['/contact', '/contact-us'];
@@ -36,6 +55,8 @@ export type DiscoveryPreviewCompany = {
     title: string;
     description: string;
     engine: string;
+    query?: string;
+    queries?: string[];
   };
   candidateKind: 'company_likely' | 'directory_likely';
   researchedPages: string[];
@@ -55,6 +76,40 @@ export type DiscoveryPreviewCompany = {
     instagram: Array<{ url: string; sourceUrl?: string }>;
   };
   sources: Array<'searxng' | 'firecrawl' | 'keelead'>;
+};
+
+export type ResearchCandidateHit = SearxngSearchHit & {
+  searchQuery?: string;
+  searchQueries?: string[];
+  searchRank?: number;
+};
+
+export type DiscoverCandidatesInput = {
+  query: string;
+  limit?: number;
+};
+
+export type DiscoverCandidatesResult = {
+  query: string;
+  hits: SearxngSearchHit[];
+  errors: LeadProviderError[];
+};
+
+export type ResearchCandidatesInput = {
+  hits: ResearchCandidateHit[];
+  /** Hard safety cap; defaults to env research budget. */
+  maxCompanies?: number;
+  assertNotCancelled?: () => Promise<void>;
+  onProgress?: (patch: { phase: 'RESEARCHING' | 'VERIFYING'; researched?: number }) => Promise<void>;
+};
+
+export type ResearchCandidatesResult = {
+  companies: DiscoveryPreviewCompany[];
+  researched: number;
+  successful: number;
+  pagesScraped: number;
+  keeleadVerifyCalls: number;
+  errors: LeadProviderError[];
 };
 
 export type DiscoveryPreviewResult = {
@@ -254,26 +309,18 @@ async function researchCompanyPages(
 }
 
 /**
- * Dry-run lead discovery — no Prisma writes.
- * SearXNG → rank/dedupe → map+scrape homepage/contact/about → regex → KeeLead verify
+ * Search only — SearXNG. No DB. A provider error is returned, not thrown,
+ * so callers can continue with other queries.
  */
-export async function runDiscoveryPreview(
-  input: DiscoveryPreviewInput,
-): Promise<DiscoveryPreviewResult> {
-  const started = Date.now();
-  const errors: LeadProviderError[] = [];
+export async function discoverCandidates(
+  input: DiscoverCandidatesInput,
+): Promise<DiscoverCandidatesResult> {
   const query = input.query.trim();
-  const maxCandidates = Math.min(
-    Math.max(input.maxCandidates ?? DEFAULT_MAX_RESEARCH, 1),
-    MAX_RESEARCH_HARD,
-  );
-
-  let searchHits: SearxngSearchHit[] = [];
+  const limit = Math.min(Math.max(input.limit ?? SEARCH_CANDIDATE_CAP, 1), SEARCH_CANDIDATE_CAP);
+  const errors: LeadProviderError[] = [];
+  let hits: SearxngSearchHit[] = [];
   try {
-    searchHits = await searxngProvider.searchWebCompanies({
-      query,
-      limit: SEARCH_CANDIDATE_CAP,
-    });
+    hits = await searxngProvider.searchWebCompanies({ query, limit });
   } catch (err) {
     const code = err instanceof AppError ? err.code : 'SEARXNG_ERROR';
     errors.push({
@@ -282,156 +329,276 @@ export async function runDiscoveryPreview(
       message: err instanceof Error ? err.message : String(err),
     });
   }
+  return { query, hits, errors };
+}
 
-  const unique = rankCandidates(dedupeByDomain(searchHits));
-  const toResearch = unique.slice(0, maxCandidates);
+function researchHardCap(requested?: number): number {
+  const envCap = Math.max(env.leadAgentMaxResearchCompanies || MAX_RESEARCH_HARD, 1);
+  const n = requested ?? envCap;
+  return Math.min(Math.max(n, 1), envCap);
+}
+
+async function verifyEmailsBounded(
+  emails: Array<{ value: string; sourceUrl?: string }>,
+  domain: string,
+  sources: Array<'searxng' | 'firecrawl' | 'keelead'>,
+  errors: LeadProviderError[],
+): Promise<{
+  emails: DiscoveryPreviewCompany['contacts']['emails'];
+  keeleadVerifyCalls: number;
+}> {
+  const toVerify = emails.slice(0, MAX_EMAILS_PER_COMPANY);
+  const concurrency = resolveEmailVerifyConcurrency();
+  const verified = await mapWithConcurrency(toVerify, concurrency, async (item) => {
+    try {
+      const verification = await keeleadProvider.verifyEmail(item.value);
+      if (!sources.includes('keelead')) sources.push('keelead');
+      return {
+        email: verification.email,
+        ...(item.sourceUrl ? { sourceUrl: item.sourceUrl } : {}),
+        verification: {
+          score: verification.score,
+          status: verification.status,
+          details: verification.details ?? null,
+          suggestion: verification.suggestion ?? null,
+          notes: verification.notes ?? null,
+        },
+      };
+    } catch (err) {
+      errors.push({
+        provider: 'keelead',
+        code: 'KEELEAD_VERIFY_FAILED',
+        message: err instanceof Error ? err.message : String(err),
+        domain,
+      });
+      return {
+        email: item.value,
+        ...(item.sourceUrl ? { sourceUrl: item.sourceUrl } : {}),
+        verification: null,
+      };
+    }
+  });
+  return { emails: verified, keeleadVerifyCalls: toVerify.length };
+}
+
+async function researchOneCompany(
+  hit: ResearchCandidateHit,
+  errors: LeadProviderError[],
+  assertNotCancelled?: () => Promise<void>,
+  onProgress?: ResearchCandidatesInput['onProgress'],
+): Promise<{
+  company: DiscoveryPreviewCompany;
+  successful: boolean;
+  pagesScraped: number;
+  keeleadVerifyCalls: number;
+}> {
+  await assertNotCancelled?.();
+  const sources: Array<'searxng' | 'firecrawl' | 'keelead'> = ['searxng'];
+  const directoryLikely = isDirectoryLikely(hit);
+  const queries = hit.searchQueries?.length
+    ? hit.searchQueries
+    : hit.searchQuery
+      ? [hit.searchQuery]
+      : [];
+  const company: DiscoveryPreviewCompany = {
+    domain: hit.domain,
+    website: homepageUrl(hit.domain),
+    search: {
+      title: hit.title,
+      description: hit.description,
+      engine: hit.engine,
+      ...(hit.searchQuery ? { query: hit.searchQuery } : {}),
+      ...(queries.length ? { queries } : {}),
+    },
+    candidateKind: directoryLikely ? 'directory_likely' : 'company_likely',
+    researchedPages: [],
+    websiteResearch: null,
+    contacts: {
+      emails: [],
+      phones: [],
+      linkedin: [],
+      facebook: [],
+      instagram: [],
+    },
+    sources,
+  };
+
+  const selected = await selectResearchPages(hit.domain);
+  if (selected.mapError) {
+    errors.push({
+      provider: 'firecrawl',
+      code: 'FIRECRAWL_MAP_SKIPPED',
+      message: selected.mapError,
+      domain: hit.domain,
+      url: homepageUrl(hit.domain),
+    });
+  }
+
+  const { scraped, pagesScraped } = await researchCompanyPages(hit.domain, selected, errors);
+  company.researchedPages = scraped.map((s) => s.url);
+
+  if (scraped.length === 0) {
+    return { company, successful: false, pagesScraped, keeleadVerifyCalls: 0 };
+  }
+
+  sources.push('firecrawl');
+  const homeOrFirst = scraped[0];
+  const mergedMarkdown = scraped.map((s) => s.markdown).join('\n\n');
+  company.websiteResearch = {
+    title: homeOrFirst.title || '',
+    markdownPreview: mergedMarkdown.slice(0, MARKDOWN_PREVIEW_CHARS),
+  };
+
+  const pageExtracts: ExtractedContacts[] = scraped.map((s) =>
+    extractContactsFromText(`${s.markdown}\n${s.title}`, s.url),
+  );
+  const extracted = mergeExtractedContacts(pageExtracts);
+
+  company.contacts.phones = extracted.phones.map((p) => ({
+    phone: p.value,
+    ...(p.sourceUrl ? { sourceUrl: p.sourceUrl } : {}),
+  }));
+  company.contacts.linkedin = extracted.linkedin.map((p) => ({
+    url: p.value,
+    ...(p.sourceUrl ? { sourceUrl: p.sourceUrl } : {}),
+  }));
+  company.contacts.facebook = extracted.facebook.map((p) => ({
+    url: p.value,
+    ...(p.sourceUrl ? { sourceUrl: p.sourceUrl } : {}),
+  }));
+  company.contacts.instagram = extracted.instagram.map((p) => ({
+    url: p.value,
+    ...(p.sourceUrl ? { sourceUrl: p.sourceUrl } : {}),
+  }));
+
+  await assertNotCancelled?.();
+  await onProgress?.({ phase: 'VERIFYING' });
+  const verified = await verifyEmailsBounded(extracted.emails, hit.domain, sources, errors);
+  company.contacts.emails = verified.emails;
+  return {
+    company,
+    successful: true,
+    pagesScraped,
+    keeleadVerifyCalls: verified.keeleadVerifyCalls,
+  };
+}
+
+/**
+ * Research only — Firecrawl + regex contacts + KeeLead. No DB.
+ * One company failure does not stop the rest. Hard-capped by env.
+ */
+export async function researchCandidates(
+  input: ResearchCandidatesInput,
+): Promise<ResearchCandidatesResult> {
+  const errors: LeadProviderError[] = [];
+  const cap = researchHardCap(input.maxCompanies);
+  const toResearch = input.hits.slice(0, cap);
+  const concurrency = resolveResearchConcurrency();
+  let cancelled = false;
+
+  const results = await mapWithConcurrency(toResearch, concurrency, async (hit) => {
+    try {
+      if (cancelled) return null;
+      return await researchOneCompany(hit, errors, input.assertNotCancelled, input.onProgress);
+    } catch (err) {
+      if (isLeadTaskCancelledError(err)) {
+        cancelled = true;
+        return null;
+      }
+      errors.push({
+        provider: 'firecrawl',
+        code: 'RESEARCH_COMPANY_FAILED',
+        message: err instanceof Error ? err.message : String(err),
+        domain: hit.domain,
+      });
+      return null;
+    }
+  });
+
   const companies: DiscoveryPreviewCompany[] = [];
   let successful = 0;
   let pagesScraped = 0;
   let keeleadVerifyCalls = 0;
-
-  for (const hit of toResearch) {
-    const sources: Array<'searxng' | 'firecrawl' | 'keelead'> = ['searxng'];
-    const directoryLikely = isDirectoryLikely(hit);
-    const company: DiscoveryPreviewCompany = {
-      domain: hit.domain,
-      website: homepageUrl(hit.domain),
-      search: {
-        title: hit.title,
-        description: hit.description,
-        engine: hit.engine,
-      },
-      candidateKind: directoryLikely ? 'directory_likely' : 'company_likely',
-      researchedPages: [],
-      websiteResearch: null,
-      contacts: {
-        emails: [],
-        phones: [],
-        linkedin: [],
-        facebook: [],
-        instagram: [],
-      },
-      sources,
-    };
-
-    const selected = await selectResearchPages(hit.domain);
-    if (selected.mapError) {
-      errors.push({
-        provider: 'firecrawl',
-        code: 'FIRECRAWL_MAP_SKIPPED',
-        message: selected.mapError,
-        domain: hit.domain,
-        url: homepageUrl(hit.domain),
-      });
-    }
-
-    const { scraped, pagesScraped: n } = await researchCompanyPages(
-      hit.domain,
-      selected,
-      errors,
-    );
-    pagesScraped += n;
-    company.researchedPages = scraped.map((s) => s.url);
-
-    if (scraped.length === 0) {
-      companies.push(company);
-      continue;
-    }
-
-    sources.push('firecrawl');
-    successful += 1;
-
-    const homeOrFirst = scraped[0];
-    const mergedMarkdown = scraped.map((s) => s.markdown).join('\n\n');
-    company.websiteResearch = {
-      title: homeOrFirst.title || '',
-      markdownPreview: mergedMarkdown.slice(0, MARKDOWN_PREVIEW_CHARS),
-    };
-
-    const pageExtracts: ExtractedContacts[] = scraped.map((s) =>
-      extractContactsFromText(
-        `${s.markdown}\n${s.title}`,
-        s.url,
-      ),
-    );
-    const extracted = mergeExtractedContacts(pageExtracts);
-
-    company.contacts.phones = extracted.phones.map((p) => ({
-      phone: p.value,
-      ...(p.sourceUrl ? { sourceUrl: p.sourceUrl } : {}),
-    }));
-    company.contacts.linkedin = extracted.linkedin.map((p) => ({
-      url: p.value,
-      ...(p.sourceUrl ? { sourceUrl: p.sourceUrl } : {}),
-    }));
-    company.contacts.facebook = extracted.facebook.map((p) => ({
-      url: p.value,
-      ...(p.sourceUrl ? { sourceUrl: p.sourceUrl } : {}),
-    }));
-    company.contacts.instagram = extracted.instagram.map((p) => ({
-      url: p.value,
-      ...(p.sourceUrl ? { sourceUrl: p.sourceUrl } : {}),
-    }));
-
-    const emailsToVerify = extracted.emails.slice(0, MAX_EMAILS_PER_COMPANY);
-    for (const item of emailsToVerify) {
-      keeleadVerifyCalls += 1;
-      try {
-        const verification = await keeleadProvider.verifyEmail(item.value);
-        if (!sources.includes('keelead')) sources.push('keelead');
-        company.contacts.emails.push({
-          email: verification.email,
-          ...(item.sourceUrl ? { sourceUrl: item.sourceUrl } : {}),
-          verification: {
-            score: verification.score,
-            status: verification.status,
-            details: verification.details ?? null,
-            suggestion: verification.suggestion ?? null,
-            notes: verification.notes ?? null,
-          },
-        });
-      } catch (err) {
-        errors.push({
-          provider: 'keelead',
-          code: 'KEELEAD_VERIFY_FAILED',
-          message: err instanceof Error ? err.message : String(err),
-          domain: hit.domain,
-        });
-        company.contacts.emails.push({
-          email: item.value,
-          ...(item.sourceUrl ? { sourceUrl: item.sourceUrl } : {}),
-          verification: null,
-        });
-      }
-    }
-
-    companies.push(company);
+  for (const row of results) {
+    if (!row) continue;
+    companies.push(row.company);
+    if (row.successful) successful += 1;
+    pagesScraped += row.pagesScraped;
+    keeleadVerifyCalls += row.keeleadVerifyCalls;
   }
+
+  const result = {
+    companies,
+    researched: companies.length,
+    successful,
+    pagesScraped,
+    keeleadVerifyCalls,
+    errors,
+  };
+  if (cancelled) {
+    const err = new LeadTaskCancelledError();
+    err.partial = result;
+    throw err;
+  }
+  return result;
+}
+
+/**
+ * Dry-run lead discovery — no Prisma writes.
+ * Single-query preview: SearXNG → rank/dedupe → research.
+ */
+export async function runDiscoveryPreview(
+  input: DiscoveryPreviewInput,
+): Promise<DiscoveryPreviewResult> {
+  const started = Date.now();
+  const query = input.query.trim();
+  const maxCandidates = Math.min(
+    Math.max(input.maxCandidates ?? DEFAULT_MAX_RESEARCH, 1),
+    MAX_RESEARCH_HARD,
+  );
+
+  const discovered = await discoverCandidates({ query, limit: SEARCH_CANDIDATE_CAP });
+  const unique = rankCandidates(dedupeByDomain(discovered.hits));
+  const toResearch = unique.slice(0, maxCandidates).map((hit) => ({
+    ...hit,
+    searchQuery: query,
+    searchQueries: [query],
+  }));
+  const researched = await researchCandidates({
+    hits: toResearch,
+    maxCompanies: maxCandidates,
+  });
 
   return {
     query,
     stats: {
-      searchResults: searchHits.length,
+      searchResults: discovered.hits.length,
       uniqueDomains: unique.length,
-      researched: toResearch.length,
-      successful,
-      pagesScraped,
-      keeleadVerifyCalls,
+      researched: researched.researched,
+      successful: researched.successful,
+      pagesScraped: researched.pagesScraped,
+      keeleadVerifyCalls: researched.keeleadVerifyCalls,
     },
-    companies,
-    errors,
+    companies: researched.companies,
+    errors: [...discovered.errors, ...researched.errors],
     durationMs: Date.now() - started,
   };
 }
 
 export const leadDiscoveryService = {
   runDiscoveryPreview,
+  discoverCandidates,
+  researchCandidates,
   dedupeByDomain,
   rankCandidates,
   isDirectoryLikely,
   selectResearchPages,
   SEARCH_CANDIDATE_CAP,
   MAX_RESEARCH_HARD,
+  resolveResearchConcurrency,
+  resolveEmailVerifyConcurrency,
+  LEAD_RESEARCH_CONCURRENCY_HARD_MAX,
+  LEAD_EMAIL_VERIFY_CONCURRENCY_HARD_MAX,
   MAX_EMAILS_PER_COMPANY,
   MAX_PAGES_PER_COMPANY,
 };

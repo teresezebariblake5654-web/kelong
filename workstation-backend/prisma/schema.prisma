@@ -134,6 +134,12 @@ model Organization {
   leadContacts       LeadContact[]
   leadSourceRecords  LeadSourceRecord[]
   leadScores         LeadScore[]
+  salesProspects       SalesProspect[]
+  salesConversations   SalesConversation[]
+  salesMessages        SalesMessage[]
+  salesActivities      SalesActivity[]
+  salesAgentProfiles   SalesAgentProfile[]
+  salesAgentRuns       SalesAgentRun[]
 }
 
 model OrganizationMember {
@@ -593,6 +599,7 @@ enum LeadSearchTaskStatus {
   RUNNING
   COMPLETED
   FAILED
+  CANCELLED
 }
 
 /// Org-scoped dry-run / discovery search task (schema only; no save wiring yet).
@@ -610,6 +617,8 @@ model LeadSearchTask {
   metadata           Json?
   startedAt          DateTime?
   completedAt        DateTime?
+  cancelRequestedAt  DateTime?
+  cancelledAt        DateTime?
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
 
@@ -641,9 +650,10 @@ model LeadCompany {
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
-  contacts      LeadContact[]
-  sourceRecords LeadSourceRecord[]
-  scores        LeadScore[]
+  contacts       LeadContact[]
+  sourceRecords  LeadSourceRecord[]
+  scores         LeadScore[]
+  salesProspects SalesProspect[]
 
   @@unique([organizationId, normalizedDomain])
   @@index([organizationId])
@@ -672,7 +682,8 @@ model LeadContact {
   createdAt               DateTime     @default(now())
   updatedAt               DateTime     @updatedAt
 
-  sourceRecords LeadSourceRecord[]
+  sourceRecords  LeadSourceRecord[]
+  salesProspects SalesProspect[]
 
   @@index([organizationId])
   @@index([companyId])
@@ -750,4 +761,189 @@ model LeadScore {
   @@index([overallScore])
   @@index([grade])
   @@index([searchTaskId, grade, overallScore])
+}
+
+enum SalesProspectStatus {
+  NEW
+  CONTACTED
+  REPLIED
+  INTERESTED
+  NOT_INTERESTED
+  FOLLOW_UP
+  HANDOFF
+  CLOSED
+}
+
+enum SalesChannel {
+  EMAIL
+  WHATSAPP
+}
+
+enum SalesMessageDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum SalesMessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  RECEIVED
+}
+
+enum SalesActivityType {
+  PROSPECT_CREATED
+  MESSAGE_QUEUED
+  MESSAGE_SENT
+  MESSAGE_FAILED
+  MESSAGE_RECEIVED
+  STATUS_CHANGED
+  AGENT_DECISION
+  HANDOFF
+}
+
+enum SalesAgentRunTrigger {
+  INITIAL_OUTREACH
+  INBOUND_REPLY
+  SCHEDULED_FOLLOWUP
+  MANUAL
+}
+
+enum SalesAgentRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+/// Org-scoped AI sales employee persona / instructions.
+model SalesAgentProfile {
+  id                       String       @id @default(cuid())
+  organizationId           String
+  organization             Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name                     String
+  role                     String       @default("Sales Representative")
+  companyDescription       String
+  productDescription       String
+  targetCustomerDescription String
+  tone                     String       @default("professional")
+  language                 String       @default("en")
+  salesInstructions        String?
+  handoffInstructions      String?
+  isActive                 Boolean      @default(true)
+  createdAt                DateTime     @default(now())
+  updatedAt                DateTime     @updatedAt
+
+  runs SalesAgentRun[]
+
+  @@index([organizationId, isActive])
+}
+
+/// Auditable AI sales decision (final structured decision only — no CoT).
+model SalesAgentRun {
+  id                      String               @id @default(cuid())
+  organizationId          String
+  organization            Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  prospectId              String
+  prospect                SalesProspect        @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  profileId               String?
+  profile                 SalesAgentProfile?   @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  trigger                 SalesAgentRunTrigger
+  triggerInboundMessageId String?
+  decision                Json?
+  inputRefs               Json?
+  model                   String?
+  status                  SalesAgentRunStatus  @default(PENDING)
+  errorCode               String?
+  createdAt               DateTime             @default(now())
+  completedAt             DateTime?
+
+  @@unique([organizationId, triggerInboundMessageId])
+  @@index([organizationId, prospectId, createdAt])
+  @@index([organizationId, status])
+}
+
+/// Org-scoped sales prospect created from a LeadCompany (not a CRM).
+model SalesProspect {
+  id                String              @id @default(cuid())
+  organizationId    String
+  organization      Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  leadCompanyId     String
+  leadCompany       LeadCompany         @relation(fields: [leadCompanyId], references: [id], onDelete: Cascade)
+  leadContactId     String?
+  leadContact       LeadContact?        @relation(fields: [leadContactId], references: [id], onDelete: SetNull)
+  status            SalesProspectStatus @default(NEW)
+  preferredChannel  SalesChannel
+  nextFollowUpAt    DateTime?
+  handoff           Json?
+  lastOutboundAt    DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  conversations SalesConversation[]
+  activities    SalesActivity[]
+  agentRuns     SalesAgentRun[]
+
+  @@unique([organizationId, leadCompanyId])
+  @@index([organizationId, status])
+  @@index([leadContactId])
+  @@index([organizationId, nextFollowUpAt])
+}
+
+model SalesConversation {
+  id               String         @id @default(cuid())
+  organizationId   String
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  prospectId       String
+  prospect         SalesProspect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  channel          SalesChannel
+  externalThreadId String?
+  lastMessageAt    DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  messages SalesMessage[]
+
+  @@unique([organizationId, prospectId, channel])
+  @@index([organizationId, channel, externalThreadId])
+}
+
+model SalesMessage {
+  id                String                @id @default(cuid())
+  organizationId    String
+  organization      Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversationId    String
+  conversation      SalesConversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  direction         SalesMessageDirection
+  channel           SalesChannel
+  status            SalesMessageStatus
+  fromAddress       String?
+  toAddress         String?
+  subject           String?
+  content           String
+  providerMessageId String?
+  providerMetadata  Json?
+  idempotencyKey    String?
+  sentAt            DateTime?
+  receivedAt        DateTime?
+  createdAt         DateTime              @default(now())
+
+  @@unique([organizationId, channel, providerMessageId])
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, conversationId, createdAt])
+}
+
+model SalesActivity {
+  id             String            @id @default(cuid())
+  organizationId String
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  prospectId     String
+  prospect       SalesProspect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  type           SalesActivityType
+  payload        Json?
+  createdAt      DateTime          @default(now())
+
+  @@index([organizationId, prospectId, createdAt])
 }

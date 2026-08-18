@@ -31,6 +31,8 @@ import v1RechargeRoutes from './routes/v1/recharge.routes';
 import v1AdminRoutes from './routes/v1/admin.routes';
 import v1FeedbackRoutes from './routes/v1/feedback.routes';
 import v1LeadsRoutes from './routes/v1/leads.routes';
+import v1SalesRoutes from './routes/v1/sales.routes';
+import v1SystemRoutes from './routes/v1/system.routes';
 
 async function healthHandler(deep: boolean) {
   if (!deep) {
@@ -78,7 +80,14 @@ export function createApp() {
       exposedHeaders: ['Content-Disposition', 'X-File-Name'],
     }),
   );
-  app.use(express.json({ limit: '2mb' }));
+  app.use(
+    express.json({
+      limit: '2mb',
+      verify: (req, _res, buf) => {
+        (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
+      },
+    }),
+  );
   app.use(cookieParser());
 
   // Public assets (payment QR codes, etc.) — no auth
@@ -164,6 +173,8 @@ export function createApp() {
   app.use('/api/v1/admin', v1AdminRoutes);
   app.use('/api/v1/feedback', v1FeedbackRoutes);
   app.use('/api/v1/leads', v1LeadsRoutes);
+  app.use('/api/v1/sales', v1SalesRoutes);
+  app.use('/api/v1/system', v1SystemRoutes);
 
   if (env.nodeEnv !== 'production') {
     app.get('/api/test-error', () => {

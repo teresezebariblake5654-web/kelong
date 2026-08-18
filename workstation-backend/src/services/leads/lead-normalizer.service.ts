@@ -3,11 +3,13 @@
  * No LLM. No invented values. Optional page provenance via sourceUrl.
  */
 
+import {
+  extractPhonesFromText,
+  isPlaceholderEmail,
+} from './lead-phone.service';
+
 const EMAIL_RE =
   /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/g;
-
-const PHONE_RE =
-  /(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?)\d{3,4}[\s.-]?\d{3,4}\b/g;
 
 const URL_RE = /https?:\/\/[^\s<>"'`)\]]+/gi;
 
@@ -24,23 +26,17 @@ export type ExtractedContacts = {
   instagram: ContactWithSource[];
 };
 
-function uniqueByValue(items: ContactWithSource[]): ContactWithSource[] {
+function uniqueByDigitsOrValue(items: ContactWithSource[], kind: 'phone' | 'other'): ContactWithSource[] {
   const seen = new Set<string>();
   const out: ContactWithSource[] = [];
   for (const item of items) {
-    const key = item.value.toLowerCase();
-    if (seen.has(key)) continue;
+    const key =
+      kind === 'phone' ? item.value.replace(/\D/g, '') : item.value.toLowerCase();
+    if (!key || seen.has(key)) continue;
     seen.add(key);
     out.push(item);
   }
   return out;
-}
-
-function isLikelyPhone(value: string): boolean {
-  const digits = value.replace(/\D/g, '');
-  if (digits.length < 7 || digits.length > 15) return false;
-  if (/^(19|20)\d{2}$/.test(digits)) return false;
-  return true;
 }
 
 function cleanUrl(raw: string): string | null {
@@ -64,19 +60,15 @@ export function extractContactsFromText(
 ): ExtractedContacts {
   const source = text || '';
 
-  const emails = uniqueByValue(
+  const emails = uniqueByDigitsOrValue(
     (source.match(EMAIL_RE) || [])
       .map((e) => e.trim())
-      .filter((e) => !e.toLowerCase().endsWith('.png') && !e.toLowerCase().endsWith('.jpg'))
+      .filter((e) => !isPlaceholderEmail(e))
       .map((e) => withSource(e, sourceUrl)),
+    'other',
   );
 
-  const phones = uniqueByValue(
-    (source.match(PHONE_RE) || [])
-      .map((p) => p.trim())
-      .filter(isLikelyPhone)
-      .map((p) => withSource(p, sourceUrl)),
-  );
+  const phones = extractPhonesFromText(source, sourceUrl);
 
   const urls = (source.match(URL_RE) || [])
     .map(cleanUrl)
@@ -103,21 +95,21 @@ export function extractContactsFromText(
 
   return {
     emails,
-    phones: uniqueByValue(phones),
-    linkedin: uniqueByValue(linkedin),
-    facebook: uniqueByValue(facebook),
-    instagram: uniqueByValue(instagram),
+    phones,
+    linkedin: uniqueByDigitsOrValue(linkedin, 'other'),
+    facebook: uniqueByDigitsOrValue(facebook, 'other'),
+    instagram: uniqueByDigitsOrValue(instagram, 'other'),
   };
 }
 
 /** Merge page extractions; first provenance wins on duplicate values. */
 export function mergeExtractedContacts(parts: ExtractedContacts[]): ExtractedContacts {
   return {
-    emails: uniqueByValue(parts.flatMap((p) => p.emails)),
-    phones: uniqueByValue(parts.flatMap((p) => p.phones)),
-    linkedin: uniqueByValue(parts.flatMap((p) => p.linkedin)),
-    facebook: uniqueByValue(parts.flatMap((p) => p.facebook)),
-    instagram: uniqueByValue(parts.flatMap((p) => p.instagram)),
+    emails: uniqueByDigitsOrValue(parts.flatMap((p) => p.emails), 'other'),
+    phones: uniqueByDigitsOrValue(parts.flatMap((p) => p.phones), 'phone'),
+    linkedin: uniqueByDigitsOrValue(parts.flatMap((p) => p.linkedin), 'other'),
+    facebook: uniqueByDigitsOrValue(parts.flatMap((p) => p.facebook), 'other'),
+    instagram: uniqueByDigitsOrValue(parts.flatMap((p) => p.instagram), 'other'),
   };
 }
 

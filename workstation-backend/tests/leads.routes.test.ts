@@ -151,6 +151,29 @@ describe('leads discovery route (enqueue mocked)', () => {
     expect(res.body.data.task.id).toBe('task1');
     expect(res.body.data.stats).toBeUndefined();
   });
+
+  it('accepts targetCount=20 on POST /discovery', async () => {
+    vi.spyOn(discoveryRun.leadDiscoveryRunService, 'startLeadDiscovery').mockResolvedValue({
+      task: {
+        id: 'task20',
+        status: 'PENDING',
+        query: 'medical',
+        prompt: 'medical',
+        targetCount: 20,
+        startedAt: null,
+        completedAt: null,
+        createdAt: new Date(),
+      },
+    });
+    const app = buildTestApp({ authed: true, withOrg: true });
+    const res = await request(app)
+      .post('/api/v1/leads/discovery')
+      .send({ query: 'medical device distributors Saudi Arabia', targetCount: 20 });
+    expect(res.status).toBe(202);
+    expect(discoveryRun.leadDiscoveryRunService.startLeadDiscovery).toHaveBeenCalledWith(
+      expect.objectContaining({ targetCount: 20 }),
+    );
+  });
 });
 
 describe('discovery-preview remains non-writing (db check)', () => {

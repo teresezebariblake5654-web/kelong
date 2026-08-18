@@ -14,6 +14,9 @@ export type SearxngSearchHit = {
   domain: string;
   description: string;
   engine: string;
+  searchQuery?: string;
+  searchQueries?: string[];
+  searchRank?: number;
 };
 
 export type FirecrawlScrapeResult = {

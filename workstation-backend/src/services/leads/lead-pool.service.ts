@@ -12,6 +12,7 @@ import type {
 } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { AppError } from '../../utils/errors';
+import { publicProgress, type LeadTaskProgress } from './lead-task-progress.types';
 import type {
   LeadPoolCompanyDetailDto,
   LeadPoolCompanyResultDto,
@@ -586,6 +587,8 @@ export async function getSearchTask(params: {
 
   const meta = asObject(task.metadata);
   const errorMessage = asStringOrNull(meta.error);
+  const progressRaw = asObject(meta.progress) as Partial<LeadTaskProgress>;
+  const outcomeRaw = asObject(meta.outcome);
 
   return {
     task: {
@@ -604,6 +607,24 @@ export async function getSearchTask(params: {
       gradeCounts,
       startedAt: toIso(task.startedAt),
       errorMessage,
+      cancelRequestedAt: toIso(task.cancelRequestedAt),
+      cancelledAt: toIso(task.cancelledAt),
+      progress: publicProgress(
+        progressRaw.phase ? (progressRaw as LeadTaskProgress) : null,
+      ),
+      outcome:
+        typeof outcomeRaw.requestedTarget === 'number'
+          ? {
+              requestedTarget: outcomeRaw.requestedTarget as number,
+              acquiredCompanies:
+                typeof outcomeRaw.acquiredCompanies === 'number'
+                  ? outcomeRaw.acquiredCompanies
+                  : 0,
+              targetReached: Boolean(outcomeRaw.targetReached),
+              stopReason:
+                typeof outcomeRaw.stopReason === 'string' ? outcomeRaw.stopReason : '',
+            }
+          : null,
     },
   };
 }

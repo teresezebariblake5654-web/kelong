@@ -2,7 +2,7 @@ type LogLevel = 'info' | 'warn' | 'error' | 'debug';
 
 type LogMeta = Record<string, unknown>;
 
-const SENSITIVE_KEYS = /password|secret|token|authorization|cookie|api[_-]?key|pepper/i;
+const SENSITIVE_KEYS = /password|secret|token|authorization|cookie|api[_-]?key|pepper|jwt/i;
 
 function redact(value: unknown): unknown {
   if (value == null) return value;

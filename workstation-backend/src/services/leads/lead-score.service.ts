@@ -12,6 +12,7 @@ import {
   getActiveLlmModel,
   getOpenAICompatibleChatClient,
 } from '../../providers/llm';
+import { withProviderRetry } from '../../providers/lead-engines/provider-retry';
 import { AppError } from '../../utils/errors';
 import {
   MAX_COMPANIES_PER_TASK_SCORE,
@@ -243,32 +244,38 @@ async function defaultLlmCall(input: {
   inputTokens: number;
   outputTokens: number;
 }> {
-  const client = getOpenAICompatibleChatClient();
-  const result = await client.chat({
-    systemPrompt: input.systemPrompt,
-    userPrompt: JSON.stringify(input.structuredData),
-    model: input.model,
-    maxOutputTokens: input.maxOutputTokens,
-    temperature: 0.1,
-    jsonMode: true,
+  return withProviderRetry({
+    provider: 'llm',
+    op: 'icp_score',
+    fn: async () => {
+      const client = getOpenAICompatibleChatClient();
+      const result = await client.chat({
+        systemPrompt: input.systemPrompt,
+        userPrompt: JSON.stringify(input.structuredData),
+        model: input.model,
+        maxOutputTokens: input.maxOutputTokens,
+        temperature: 0.1,
+        jsonMode: true,
+      });
+      let output: unknown;
+      try {
+        output = extractJsonObject(result.content);
+      } catch (err) {
+        throw new AppError(
+          502,
+          err instanceof Error ? err.message : 'Invalid LLM JSON',
+          'ICP_LLM_INVALID_JSON',
+        );
+      }
+      return {
+        output,
+        provider: result.provider,
+        model: result.model,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+      };
+    },
   });
-  let output: unknown;
-  try {
-    output = extractJsonObject(result.content);
-  } catch (err) {
-    throw new AppError(
-      502,
-      err instanceof Error ? err.message : 'Invalid LLM JSON',
-      'ICP_LLM_INVALID_JSON',
-    );
-  }
-  return {
-    output,
-    provider: result.provider,
-    model: result.model,
-    inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens,
-  };
 }
 
 export type ScoreCompanyForTaskInput = {
@@ -430,6 +437,7 @@ export type ScoreSearchTaskCompaniesInput = {
   searchTaskId: string;
   maxCompanies?: number;
   llmCall?: LeadScoreLlmCall;
+  shouldAbort?: () => Promise<boolean>;
 };
 
 /**
@@ -483,6 +491,9 @@ export async function scoreSearchTaskCompanies(
   let outputTokens = 0;
 
   for (const companyId of companyIds) {
+    if (await input.shouldAbort?.()) {
+      break;
+    }
     try {
       const result = await scoreCompanyForTask({
         organizationId: input.organizationId,

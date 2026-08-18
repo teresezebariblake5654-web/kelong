@@ -1,6 +1,7 @@
 import { env } from '../../config/env';
 import { AppError } from '../../utils/errors';
 import type { SearxngSearchHit } from './lead-provider.types';
+import { withProviderRetry } from './provider-retry';
 
 const BLOCKED_HOST_PARTS = [
   'youtube.com',
@@ -55,6 +56,16 @@ export type SearchWebCompaniesInput = {
  * Does not invent companies; maps real results only.
  */
 export async function searchWebCompanies(
+  input: SearchWebCompaniesInput,
+): Promise<SearxngSearchHit[]> {
+  return withProviderRetry({
+    provider: 'searxng',
+    op: 'search',
+    fn: () => searchWebCompaniesOnce(input),
+  });
+}
+
+async function searchWebCompaniesOnce(
   input: SearchWebCompaniesInput,
 ): Promise<SearxngSearchHit[]> {
   const base = env.searxngBaseUrl.replace(/\/$/, '');

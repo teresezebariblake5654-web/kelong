@@ -7,6 +7,8 @@
     "dev": "tsx watch src/server.ts",
     "worker:leads": "tsx src/workers/start-lead-discovery-worker.ts",
     "worker:leads:dev": "tsx watch src/workers/start-lead-discovery-worker.ts",
+    "worker:sales": "tsx src/workers/start-sales-outbound-worker.ts",
+    "worker:sales-agent": "tsx src/workers/start-sales-agent-worker.ts",
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
@@ -24,12 +26,20 @@
     "check": "npm run typecheck && npm run db:validate",
     "test": "vitest run",
     "test:auth": "vitest run tests/auth.integration.test.ts",
-    "test:leads": "vitest run tests/leadDiscovery.test.ts tests/leads.routes.test.ts tests/leadPersistence.test.ts tests/leadScore.schema.test.ts tests/leadScore.service.test.ts tests/leadPool.service.test.ts tests/leadDiscovery.queue.test.ts",
+    "test:leads": "vitest run tests/leadDiscovery.test.ts tests/leads.routes.test.ts tests/leadPersistence.test.ts tests/leadScore.schema.test.ts tests/leadScore.service.test.ts tests/leadPool.service.test.ts tests/leadDiscovery.queue.test.ts tests/acquisitionAgent.test.ts tests/leadProduction.hardening.test.ts",
+    "test:sales": "vitest run tests/sales.domain.test.ts",
+    "test:sales-agent": "vitest run tests/sales.agent.test.ts",
+    "test:production": "vitest run tests/production.hardening.test.ts",
+    "smoke:sales": "tsx scripts/smoke-sales.ts",
+    "smoke:sales-agent": "tsx scripts/smoke-sales-agent.ts",
+    "smoke:e2e": "tsx scripts/smoke-e2e-production.ts",
+    "smoke:leads:production": "tsx scripts/smoke-lead-production.ts",
     "smoke:leads": "tsx scripts/smoke-lead-discovery.ts",
     "smoke:leads:persist": "tsx scripts/smoke-lead-discovery-persist.ts",
     "smoke:leads:queue": "tsx scripts/smoke-lead-discovery-queue.ts",
     "smoke:leads:score": "tsx scripts/smoke-lead-score.ts",
-    "smoke:leads:pool": "tsx scripts/smoke-lead-pool.ts"
+    "smoke:leads:pool": "tsx scripts/smoke-lead-pool.ts",
+    "smoke:leads:agent": "tsx scripts/smoke-lead-agent.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

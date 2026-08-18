@@ -6,8 +6,10 @@ import { connectDatabase, disconnectDatabase, prisma } from '../src/config/datab
 import { leadsController } from '../src/controllers/leads.controller';
 import { errorMiddleware } from '../src/middleware/error.middleware';
 import { AppError } from '../src/utils/errors';
-import * as discoveryMod from '../src/services/leads/lead-discovery.service';
 import type { DiscoveryPreviewResult } from '../src/services/leads/lead-discovery.service';
+import * as agentMod from '../src/services/leads/agent/acquisition-agent-orchestrator.service';
+import type { AcquisitionAgentRunResult } from '../src/services/leads/agent/acquisition-agent-orchestrator.service';
+import { ACQUISITION_AGENT_VERSION } from '../src/services/leads/agent/acquisition-agent.types';
 import { leadDiscoveryRunService } from '../src/services/leads/lead-discovery-run.service';
 import * as queueMod from '../src/queues/lead-discovery.queue';
 import {
@@ -60,6 +62,28 @@ function sampleDiscovery(domain: string): DiscoveryPreviewResult {
     ],
     errors: [],
     durationMs: 8,
+  };
+}
+
+function sampleAgentResult(discovery: DiscoveryPreviewResult): AcquisitionAgentRunResult {
+  return {
+    discovery,
+    agentSummary: {
+      version: ACQUISITION_AGENT_VERSION,
+      requestedTarget: 1,
+      effectiveResearchLimit: 1,
+      plan: { queryCount: 3, source: 'fallback' },
+      executedQueries: [
+        {
+          query: discovery.query,
+          newDomains: discovery.stats.uniqueDomains,
+          hitCount: discovery.stats.searchResults,
+        },
+      ],
+      searchRounds: 1,
+      uniqueCandidates: discovery.stats.uniqueDomains,
+      stopReason: 'TARGET_REACHED',
+    },
   };
 }
 
@@ -129,11 +153,14 @@ describe('lead discovery job helpers', () => {
       taskId: 't1',
       organizationId: 'org1',
       query: 'medical device distributors Saudi Arabia',
-      maxCandidates: 1,
+      targetCount: 1,
     };
     const result = await enqueueLeadDiscoveryJob(data, fakeQueue);
     expect(result).toEqual({ jobId: 'lead-discovery-t1', duplicated: false });
-    expect(added[0].data).toEqual(data);
+    expect(added[0].data.taskId).toBe('t1');
+    expect(added[0].data.targetCount).toBe(1);
+    expect(added[0].data.researchLimit).toBeTruthy();
+    expect(added[0].data.maxCandidates).toBeUndefined();
     expect(added[0].opts.jobId).toBe('lead-discovery-t1');
     expect(JSON.stringify(added[0].data)).not.toMatch(/jwt|password|apiKey|markdown/i);
   });
@@ -149,7 +176,7 @@ describe('lead discovery job helpers', () => {
       taskId: 't2',
       organizationId: 'org1',
       query: 'q',
-      maxCandidates: 1,
+      targetCount: 1,
     };
     await enqueueLeadDiscoveryJob(data, fakeQueue);
     const second = await enqueueLeadDiscoveryJob(data, fakeQueue);
@@ -193,7 +220,7 @@ describe('lead discovery async HTTP + worker (postgres)', () => {
 
   it('POST discovery creates a PENDING task, enqueues, and returns without running discovery', async () => {
     const preview = vi
-      .spyOn(discoveryMod.leadDiscoveryService, 'runDiscoveryPreview')
+      .spyOn(agentMod.acquisitionAgentOrchestrator, 'run')
       .mockImplementation(() => new Promise(() => {}));
     const enqueue = vi.spyOn(queueMod, 'enqueueLeadDiscoveryJob').mockResolvedValue({
       jobId: 'lead-discovery-pending',
@@ -204,7 +231,7 @@ describe('lead discovery async HTTP + worker (postgres)', () => {
     const app = buildLeadsApp({ orgId: orgA });
     const res = await request(app)
       .post('/api/v1/leads/discovery')
-      .send({ query: 'medical device distributors Saudi Arabia', maxCandidates: 1 });
+      .send({ query: 'medical device distributors Saudi Arabia', targetCount: 1 });
     const elapsedMs = Date.now() - started;
 
     expect(res.status).toBe(202);
@@ -218,7 +245,7 @@ describe('lead discovery async HTTP + worker (postgres)', () => {
       taskId: res.body.data.task.id,
       organizationId: orgA,
       query: 'medical device distributors Saudi Arabia',
-      maxCandidates: 1,
+      targetCount: 1,
     });
 
     const row = await prisma.leadSearchTask.findUnique({
@@ -230,14 +257,14 @@ describe('lead discovery async HTTP + worker (postgres)', () => {
 
   it('worker execute moves PENDING → RUNNING → COMPLETED using the existing pipeline', async () => {
     const domain = `queue-ok-${suffix}.test`;
-    vi.spyOn(discoveryMod.leadDiscoveryService, 'runDiscoveryPreview').mockResolvedValue(
-      sampleDiscovery(domain),
+    vi.spyOn(agentMod.acquisitionAgentOrchestrator, 'run').mockResolvedValue(
+      sampleAgentResult(sampleDiscovery(domain)),
     );
 
     const created = await leadDiscoveryRunService.createLeadDiscoveryTask({
       organizationId: orgA,
       query: 'worker complete query',
-      maxCandidates: 1,
+      targetCount: 1,
     });
     expect(created.status).toBe('PENDING');
 
@@ -245,7 +272,7 @@ describe('lead discovery async HTTP + worker (postgres)', () => {
       taskId: created.id,
       organizationId: orgA,
       query: 'worker complete query',
-      maxCandidates: 1,
+      targetCount: 1,
     });
     expect(result.task.status).toBe('COMPLETED');
     expect(result.task.completedAt).toBeTruthy();
@@ -262,9 +289,9 @@ describe('lead discovery async HTTP + worker (postgres)', () => {
     const created = await leadDiscoveryRunService.createLeadDiscoveryTask({
       organizationId: orgA,
       query: 'retry then fail query',
-      maxCandidates: 1,
+      targetCount: 1,
     });
-    vi.spyOn(discoveryMod.leadDiscoveryService, 'runDiscoveryPreview').mockRejectedValue(
+    vi.spyOn(agentMod.acquisitionAgentOrchestrator, 'run').mockRejectedValue(
       new Error('firecrawl timeout'),
     );
 
@@ -275,7 +302,7 @@ describe('lead discovery async HTTP + worker (postgres)', () => {
           taskId: created.id,
           organizationId: orgA,
           query: 'retry then fail query',
-          maxCandidates: 1,
+          targetCount: 1,
         },
       }),
     ).rejects.toThrow(/firecrawl timeout/);
@@ -290,7 +317,7 @@ describe('lead discovery async HTTP + worker (postgres)', () => {
           taskId: created.id,
           organizationId: orgA,
           query: 'retry then fail query',
-          maxCandidates: 1,
+          targetCount: 1,
         },
         attemptsMade: 1,
         opts: { attempts: LEAD_DISCOVERY_JOB_ATTEMPTS },
@@ -308,7 +335,7 @@ describe('lead discovery async HTTP + worker (postgres)', () => {
           taskId: created.id,
           organizationId: orgA,
           query: 'retry then fail query',
-          maxCandidates: 1,
+          targetCount: 1,
         },
         attemptsMade: 3,
         opts: { attempts: LEAD_DISCOVERY_JOB_ATTEMPTS },
@@ -324,14 +351,14 @@ describe('lead discovery async HTTP + worker (postgres)', () => {
   it('retrying the same task does not create a second SearchTask', async () => {
     const domain = `queue-retry-${suffix}.test`;
     const preview = vi
-      .spyOn(discoveryMod.leadDiscoveryService, 'runDiscoveryPreview')
+      .spyOn(agentMod.acquisitionAgentOrchestrator, 'run')
       .mockRejectedValueOnce(new Error('temporary'))
-      .mockResolvedValueOnce(sampleDiscovery(domain));
+      .mockResolvedValueOnce(sampleAgentResult(sampleDiscovery(domain)));
 
     const created = await leadDiscoveryRunService.createLeadDiscoveryTask({
       organizationId: orgA,
       query: 'same task retry query',
-      maxCandidates: 1,
+      targetCount: 1,
     });
 
     await expect(
@@ -339,7 +366,7 @@ describe('lead discovery async HTTP + worker (postgres)', () => {
         taskId: created.id,
         organizationId: orgA,
         query: 'same task retry query',
-        maxCandidates: 1,
+        targetCount: 1,
       }),
     ).rejects.toThrow(/temporary/);
 
@@ -347,7 +374,7 @@ describe('lead discovery async HTTP + worker (postgres)', () => {
       taskId: created.id,
       organizationId: orgA,
       query: 'same task retry query',
-      maxCandidates: 1,
+      targetCount: 1,
     });
     expect(result.task.id).toBe(created.id);
     expect(result.task.status).toBe('COMPLETED');
@@ -381,11 +408,15 @@ describe('lead discovery async HTTP + worker (postgres)', () => {
   });
 
   it('queue unavailable marks the created task FAILED instead of leaving PENDING', async () => {
+    await prisma.leadSearchTask.updateMany({
+      where: { organizationId: orgA, status: { in: ['PENDING', 'RUNNING'] } },
+      data: { status: 'CANCELLED', cancelledAt: new Date(), cancelRequestedAt: new Date() },
+    });
     vi.spyOn(queueMod, 'enqueueLeadDiscoveryJob').mockRejectedValue(new Error('ECONNREFUSED'));
     const app = buildLeadsApp({ orgId: orgA });
     const res = await request(app)
       .post('/api/v1/leads/discovery')
-      .send({ query: 'queue down query', maxCandidates: 1 });
+      .send({ query: 'queue down query', targetCount: 1 });
     expect(res.status).toBe(503);
     expect(res.body.code).toBe('LEAD_QUEUE_UNAVAILABLE');
 

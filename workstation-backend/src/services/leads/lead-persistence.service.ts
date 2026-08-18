@@ -122,6 +122,8 @@ function companyMetadataFromDiscovery(
     searchTitle: company.search.title || null,
     searchDescription: company.search.description || null,
     searchEngine: company.search.engine || null,
+    searchQuery: company.search.query || null,
+    searchQueries: Array.isArray(company.search.queries) ? company.search.queries : [],
     researchedPages: company.researchedPages,
     websiteResearchTitle: company.websiteResearch?.title ?? null,
     discoveredPhones: dedupeStringList([...prevPhones, ...nextPhones]),
@@ -373,6 +375,8 @@ async function persistOneCompany(params: {
       engine: company.search.engine,
       candidateKind: company.candidateKind,
       domain: company.domain,
+      searchQuery: company.search.query || null,
+      searchQueries: Array.isArray(company.search.queries) ? company.search.queries : [],
     },
   });
   if (searxCreated) sourceRecords += 1;
@@ -555,7 +559,32 @@ export async function completeSearchTask(params: {
   taskId: string;
   discovery: DiscoveryPreviewResult;
   persistStats: PersistDiscoveryStats;
+  agentSummary?: Record<string, unknown>;
+  extraMetadata?: Record<string, unknown>;
 }): Promise<LeadSearchTask> {
+  const existing = await prisma.leadSearchTask.findUnique({ where: { id: params.taskId } });
+  if (!existing) {
+    throw new Error(`LeadSearchTask not found: ${params.taskId}`);
+  }
+  // Never overwrite CANCELLED with COMPLETED.
+  if (existing.status === 'CANCELLED' || existing.cancelRequestedAt) {
+    if (existing.status !== 'CANCELLED') {
+      return prisma.leadSearchTask.update({
+        where: { id: params.taskId },
+        data: {
+          status: 'CANCELLED',
+          completedAt: existing.completedAt ?? new Date(),
+        },
+      });
+    }
+    return existing;
+  }
+
+  const prevMeta =
+    existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
+      ? (existing.metadata as Record<string, unknown>)
+      : {};
+
   return prisma.leadSearchTask.update({
     where: { id: params.taskId },
     data: {
@@ -566,11 +595,14 @@ export async function completeSearchTask(params: {
       successfulCount: params.discovery.stats.successful,
       completedAt: new Date(),
       metadata: {
+        ...prevMeta,
         persist: params.persistStats,
         pagesScraped: params.discovery.stats.pagesScraped,
         keeleadVerifyCalls: params.discovery.stats.keeleadVerifyCalls,
         durationMs: params.discovery.durationMs,
-      },
+        ...(params.agentSummary ? { acquisitionAgent: params.agentSummary } : {}),
+        ...(params.extraMetadata ?? {}),
+      } as Prisma.InputJsonValue,
     },
   });
 }
@@ -581,6 +613,24 @@ export async function failSearchTask(params: {
 }): Promise<LeadSearchTask | null> {
   const message = params.error instanceof Error ? params.error.message : String(params.error);
   try {
+    const existing = await prisma.leadSearchTask.findUnique({ where: { id: params.taskId } });
+    if (!existing) return null;
+    // Terminal: never overwrite CANCELLED with FAILED.
+    if (existing.status === 'CANCELLED' || existing.cancelRequestedAt) {
+      if (existing.status !== 'CANCELLED') {
+        return prisma.leadSearchTask.update({
+          where: { id: params.taskId },
+          data: {
+            status: 'CANCELLED',
+            completedAt: existing.completedAt ?? new Date(),
+          },
+        });
+      }
+      return existing;
+    }
+    if (existing.status === 'COMPLETED' || existing.status === 'FAILED') {
+      return existing;
+    }
     return await prisma.leadSearchTask.update({
       where: { id: params.taskId },
       data: {

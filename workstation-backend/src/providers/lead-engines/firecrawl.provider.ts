@@ -1,6 +1,7 @@
 import { env } from '../../config/env';
 import { AppError } from '../../utils/errors';
 import type { FirecrawlScrapeResult } from './lead-provider.types';
+import { withProviderRetry } from './provider-retry';
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -41,6 +42,14 @@ function requireBase(): string {
  * Maps only fields present in the Firecrawl response. No invented company/emails.
  */
 export async function scrapeWebsite(targetUrl: string): Promise<FirecrawlScrapeResult> {
+  return withProviderRetry({
+    provider: 'firecrawl',
+    op: 'scrape',
+    fn: () => scrapeWebsiteOnce(targetUrl),
+  });
+}
+
+async function scrapeWebsiteOnce(targetUrl: string): Promise<FirecrawlScrapeResult> {
   const base = requireBase();
 
   const res = await withTimeout(
@@ -106,6 +115,14 @@ export async function scrapeWebsite(targetUrl: string): Promise<FirecrawlScrapeR
  * Returns real discovered links only. Failures should be handled by caller.
  */
 export async function mapWebsite(targetUrl: string): Promise<string[]> {
+  return withProviderRetry({
+    provider: 'firecrawl',
+    op: 'map',
+    fn: () => mapWebsiteOnce(targetUrl),
+  });
+}
+
+async function mapWebsiteOnce(targetUrl: string): Promise<string[]> {
   const base = requireBase();
 
   const res = await withTimeout(

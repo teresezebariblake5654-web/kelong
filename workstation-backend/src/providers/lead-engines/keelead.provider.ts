@@ -1,6 +1,7 @@
 import { env } from '../../config/env';
 import { AppError } from '../../utils/errors';
 import type { KeeleadVerificationResult } from './lead-provider.types';
+import { withProviderRetry } from './provider-retry';
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -21,6 +22,14 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
  * KeeLead Provider HTTP client — verify_email only (no search_leads).
  */
 export async function verifyEmail(email: string): Promise<KeeleadVerificationResult> {
+  return withProviderRetry({
+    provider: 'keelead',
+    op: 'verify_email',
+    fn: () => verifyEmailOnce(email),
+  });
+}
+
+async function verifyEmailOnce(email: string): Promise<KeeleadVerificationResult> {
   const base = env.keeleadBaseUrl.replace(/\/$/, '');
   if (!base) {
     throw new AppError(503, 'KEELEAD_BASE_URL is not configured', 'KEELEAD_NOT_CONFIGURED');

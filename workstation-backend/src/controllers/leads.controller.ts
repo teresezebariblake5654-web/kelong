@@ -1,19 +1,33 @@
 import { NextFunction, Request, Response } from 'express';
 import { z } from 'zod';
+import { env } from '../config/env';
 import { leadDiscoveryService } from '../services/leads/lead-discovery.service';
 import { leadDiscoveryRunService } from '../services/leads/lead-discovery-run.service';
 import { leadScoreService } from '../services/leads/lead-score.service';
 import { leadPoolService } from '../services/leads/lead-pool.service';
+import { cancelLeadSearchTask } from '../services/leads/lead-task-cancel.service';
+import { getLeadProviderHealth } from '../services/leads/lead-provider-health.service';
+import { removeLeadDiscoveryJobIfInactive } from '../queues/lead-discovery.queue';
 import {
   searchTaskListQuerySchema,
   searchTaskResultsQuerySchema,
 } from '../services/leads/lead-pool.types';
 import { AppError } from '../utils/errors';
 
+const previewBodySchema = z
+  .object({
+    query: z.string().trim().min(2).max(500),
+    maxCandidates: z.coerce.number().int().min(1).max(5).optional(),
+    targetCount: z.coerce.number().int().min(1).max(5).optional(),
+  })
+  .strict();
+
 const discoveryBodySchema = z
   .object({
     query: z.string().trim().min(2).max(500),
     maxCandidates: z.coerce.number().int().min(1).max(5).optional(),
+    /** Upper bound is LEAD_MAX_TARGET_COUNT in the service (4xx, never silent clamp). */
+    targetCount: z.coerce.number().int().min(1).max(500).optional(),
   })
   .strict();
 
@@ -34,7 +48,7 @@ export const leadsController = {
         throw new AppError(400, '请提供 X-Organization-Id', 'ORGANIZATION_REQUIRED');
       }
 
-      const parsed = discoveryBodySchema.safeParse(req.body ?? {});
+      const parsed = previewBodySchema.safeParse(req.body ?? {});
       if (!parsed.success) {
         throw new AppError(400, 'query 必填；maxCandidates 可选 1-5', 'BAD_REQUEST');
       }
@@ -48,7 +62,7 @@ export const leadsController = {
 
   /**
    * Create a PENDING LeadSearchTask, enqueue, return immediately (202).
-   * The worker runs SearXNG → Firecrawl → KeeLead in the background.
+   * The worker runs Acquisition Agent (plan → search → research → persist).
    */
   async discovery(req: Request, res: Response, next: NextFunction) {
     try {
@@ -61,7 +75,11 @@ export const leadsController = {
 
       const parsed = discoveryBodySchema.safeParse(req.body ?? {});
       if (!parsed.success) {
-        throw new AppError(400, 'query 必填；maxCandidates 可选 1-5', 'BAD_REQUEST');
+        throw new AppError(
+          400,
+          `query 必填；maxCandidates 可选 1-5；targetCount 可选 1-${env.leadMaxTargetCount}`,
+          'BAD_REQUEST',
+        );
       }
 
       const data = await leadDiscoveryRunService.startLeadDiscovery({
@@ -94,6 +112,54 @@ export const leadsController = {
         searchTaskId: taskId,
       });
       res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async cancelSearchTask(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        throw new AppError(401, '请先登录', 'UNAUTHORIZED');
+      }
+      if (!req.org?.organizationId) {
+        throw new AppError(400, '请提供 X-Organization-Id', 'ORGANIZATION_REQUIRED');
+      }
+
+      const taskId = String(req.params.taskId || '').trim();
+      if (!taskId) {
+        throw new AppError(400, 'taskId 必填', 'BAD_REQUEST');
+      }
+
+      const data = await cancelLeadSearchTask({
+        organizationId: req.org.organizationId,
+        taskId,
+        removeQueuedJob: removeLeadDiscoveryJobIfInactive,
+      });
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async providerHealth(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        throw new AppError(401, '请先登录', 'UNAUTHORIZED');
+      }
+      if (!req.org?.organizationId) {
+        throw new AppError(400, '请提供 X-Organization-Id', 'ORGANIZATION_REQUIRED');
+      }
+
+      const health = await getLeadProviderHealth();
+      res.json({
+        success: true,
+        data: {
+          searxng: { status: health.searxng.status, latencyMs: health.searxng.latencyMs },
+          firecrawl: { status: health.firecrawl.status, latencyMs: health.firecrawl.latencyMs },
+          keelead: { status: health.keelead.status, latencyMs: health.keelead.latencyMs },
+        },
+      });
     } catch (error) {
       next(error);
     }

@@ -195,6 +195,51 @@ const envSchema = z
     LEAD_QUEUE_REDIS_DB: z.coerce.number().int().min(0).max(15).default(0),
     LEAD_DISCOVERY_QUEUE_NAME: z.string().min(1).default('lead-discovery'),
     LEAD_DISCOVERY_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(1),
+    /** Acquisition Agent hard limits (LLM cannot override). */
+    LEAD_AGENT_MAX_SEARCH_ROUNDS: z.coerce.number().int().min(1).max(20).default(3),
+    LEAD_AGENT_MAX_QUERIES_PER_ROUND: z.coerce.number().int().min(1).max(20).default(5),
+    LEAD_AGENT_MAX_TOTAL_QUERIES: z.coerce.number().int().min(1).max(50).default(10),
+    LEAD_AGENT_MAX_RESEARCH_COMPANIES: z.coerce.number().int().min(1).max(50).default(20),
+    LEAD_AGENT_LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
+    LEAD_MAX_TARGET_COUNT: z.coerce.number().int().min(1).max(500).default(100),
+    LEAD_MAX_ACTIVE_TASKS_PER_ORG: z.coerce.number().int().min(1).max(50).default(2),
+    LEAD_RESEARCH_CONCURRENCY: z.coerce.number().int().min(1).max(5).optional(),
+    LEAD_FIRECRAWL_RESEARCH_CONCURRENCY: z.coerce.number().int().min(1).max(5).optional(),
+    LEAD_EMAIL_VERIFY_CONCURRENCY: z.coerce.number().int().min(1).max(8).optional(),
+    LEAD_KEELEAD_VERIFY_CONCURRENCY: z.coerce.number().int().min(1).max(8).optional(),
+    LEAD_PROVIDER_RETRY_ATTEMPTS: z.coerce.number().int().min(0).max(3).optional(),
+    LEAD_PROVIDER_MAX_RETRIES: z.coerce.number().int().min(0).max(3).optional(),
+    LEAD_PROVIDER_RETRY_BASE_MS: z.coerce.number().int().min(50).max(5_000).default(250),
+    LEAD_SEARXNG_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+    LEAD_FIRECRAWL_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+    LEAD_KEELEAD_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+
+    /** Optional sales SMTP override; falls back to shared SMTP_* / MAIL_FROM. */
+    SALES_EMAIL_HOST: z.string().optional().default(''),
+    SALES_EMAIL_PORT: z.coerce.number().int().positive().optional(),
+    SALES_EMAIL_SECURE: booleanFromEnv.optional(),
+    SALES_EMAIL_USER: z.string().optional().default(''),
+    SALES_EMAIL_PASSWORD: z.string().optional().default(''),
+    SALES_EMAIL_FROM: z.string().optional().default(''),
+    SALES_EMAIL_WEBHOOK_SECRET: z.string().optional().default(''),
+
+    WHATSAPP_GRAPH_BASE_URL: z.string().optional().default('https://graph.facebook.com/v21.0'),
+    WHATSAPP_PHONE_NUMBER_ID: z.string().optional().default(''),
+    WHATSAPP_ACCESS_TOKEN: z.string().optional().default(''),
+    WHATSAPP_VERIFY_TOKEN: z.string().optional().default(''),
+    WHATSAPP_APP_SECRET: z.string().optional().default(''),
+
+    SALES_OUTBOUND_QUEUE_NAME: z.string().min(1).default('sales-outbound'),
+    SALES_OUTBOUND_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(1),
+
+    SALES_AGENT_QUEUE_NAME: z.string().min(1).default('sales-agent'),
+    SALES_AGENT_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(1),
+    SALES_AGENT_MAX_OUTBOUND_PER_PROSPECT: z.coerce.number().int().min(1).max(50).default(8),
+    SALES_AGENT_MIN_FOLLOWUP_INTERVAL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
+    SALES_AGENT_CONTEXT_MESSAGE_LIMIT: z.coerce.number().int().min(5).max(50).default(20),
+    SALES_AGENT_LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
+    SALES_AGENT_FOLLOWUP_SCAN_INTERVAL_MS: z.coerce.number().int().min(30_000).max(3_600_000).default(300_000),
+    SALES_MAX_OUTBOUND_PER_ORG_PER_HOUR: z.coerce.number().int().min(1).max(10_000).default(120),
   })
   .superRefine((data, ctx) => {
     if (data.COOKIE_SAME_SITE === 'none' && data.COOKIE_SECURE === false) {
@@ -562,6 +607,39 @@ export type AppEnv = {
   leadQueueRedisDb: number;
   leadDiscoveryQueueName: string;
   leadDiscoveryWorkerConcurrency: number;
+  leadAgentMaxSearchRounds: number;
+  leadAgentMaxQueriesPerRound: number;
+  leadAgentMaxTotalQueries: number;
+  leadAgentMaxResearchCompanies: number;
+  leadAgentLlmTimeoutMs: number;
+  leadMaxTargetCount: number;
+  leadMaxActiveTasksPerOrg: number;
+  leadResearchConcurrency: number;
+  leadEmailVerifyConcurrency: number;
+  leadProviderRetryAttempts: number;
+  leadProviderRetryBaseMs: number;
+  salesEmailHost: string;
+  salesEmailPort: number;
+  salesEmailSecure: boolean;
+  salesEmailUser: string;
+  salesEmailPassword: string;
+  salesEmailFrom: string;
+  salesEmailWebhookSecret: string;
+  whatsappGraphBaseUrl: string;
+  whatsappPhoneNumberId: string;
+  whatsappAccessToken: string;
+  whatsappVerifyToken: string;
+  whatsappAppSecret: string;
+  salesOutboundQueueName: string;
+  salesOutboundWorkerConcurrency: number;
+  salesAgentQueueName: string;
+  salesAgentWorkerConcurrency: number;
+  salesAgentMaxOutboundPerProspect: number;
+  salesAgentMinFollowupIntervalHours: number;
+  salesAgentContextMessageLimit: number;
+  salesAgentLlmTimeoutMs: number;
+  salesAgentFollowupScanIntervalMs: number;
+  salesMaxOutboundPerOrgPerHour: number;
 };
 
 const resolvedHost =
@@ -574,7 +652,7 @@ export const env: AppEnv = {
   host: resolvedHost,
   port: raw.PORT,
   rateLimitEnabled: raw.RATE_LIMIT_ENABLED,
-  llmRequestTimeoutMs: raw.LLM_REQUEST_TIMEOUT_MS,
+  llmRequestTimeoutMs: Math.min(raw.LLM_REQUEST_TIMEOUT_MS, 120_000),
   signupBonusCreditsMax: raw.SIGNUP_BONUS_CREDITS_MAX,
   chatRateLimitWindowMs: raw.CHAT_RATE_LIMIT_WINDOW_MS,
   chatRateLimitMax: raw.CHAT_RATE_LIMIT_MAX,
@@ -678,13 +756,13 @@ export const env: AppEnv = {
   emailOtpResendCooldownSec: raw.EMAIL_OTP_RESEND_COOLDOWN_SEC,
   emailOtpDailyLimit: raw.EMAIL_OTP_DAILY_LIMIT,
   searxngBaseUrl: raw.SEARXNG_BASE_URL.trim(),
-  searxngTimeoutMs: raw.SEARXNG_TIMEOUT_MS,
+  searxngTimeoutMs: Math.min(raw.LEAD_SEARXNG_TIMEOUT_MS ?? raw.SEARXNG_TIMEOUT_MS, 60_000),
   keeleadBaseUrl: raw.KEELEAD_BASE_URL.trim(),
   keeleadProviderKey: raw.KEELEAD_PROVIDER_KEY.trim(),
-  keeleadTimeoutMs: raw.KEELEAD_TIMEOUT_MS,
+  keeleadTimeoutMs: Math.min(raw.LEAD_KEELEAD_TIMEOUT_MS ?? raw.KEELEAD_TIMEOUT_MS, 60_000),
   firecrawlBaseUrl: raw.FIRECRAWL_BASE_URL.trim(),
   firecrawlApiKey: raw.FIRECRAWL_API_KEY.trim(),
-  firecrawlTimeoutMs: raw.FIRECRAWL_TIMEOUT_MS,
+  firecrawlTimeoutMs: Math.min(raw.LEAD_FIRECRAWL_TIMEOUT_MS ?? raw.FIRECRAWL_TIMEOUT_MS, 120_000),
   leadQueueRedisHost: raw.LEAD_QUEUE_REDIS_HOST.trim() || '127.0.0.1',
   leadQueueRedisPort: raw.LEAD_QUEUE_REDIS_PORT,
   leadQueueRedisUsername: raw.LEAD_QUEUE_REDIS_USERNAME.trim(),
@@ -692,4 +770,39 @@ export const env: AppEnv = {
   leadQueueRedisDb: raw.LEAD_QUEUE_REDIS_DB,
   leadDiscoveryQueueName: raw.LEAD_DISCOVERY_QUEUE_NAME.trim() || 'lead-discovery',
   leadDiscoveryWorkerConcurrency: raw.LEAD_DISCOVERY_WORKER_CONCURRENCY,
+  leadAgentMaxSearchRounds: raw.LEAD_AGENT_MAX_SEARCH_ROUNDS,
+  leadAgentMaxQueriesPerRound: raw.LEAD_AGENT_MAX_QUERIES_PER_ROUND,
+  leadAgentMaxTotalQueries: raw.LEAD_AGENT_MAX_TOTAL_QUERIES,
+  leadAgentMaxResearchCompanies: raw.LEAD_AGENT_MAX_RESEARCH_COMPANIES,
+  leadAgentLlmTimeoutMs: Math.min(raw.LEAD_AGENT_LLM_TIMEOUT_MS, 120_000),
+  leadMaxTargetCount: raw.LEAD_MAX_TARGET_COUNT,
+  leadMaxActiveTasksPerOrg: raw.LEAD_MAX_ACTIVE_TASKS_PER_ORG,
+  leadResearchConcurrency:
+    raw.LEAD_FIRECRAWL_RESEARCH_CONCURRENCY ?? raw.LEAD_RESEARCH_CONCURRENCY ?? 3,
+  leadEmailVerifyConcurrency:
+    raw.LEAD_KEELEAD_VERIFY_CONCURRENCY ?? raw.LEAD_EMAIL_VERIFY_CONCURRENCY ?? 5,
+  leadProviderRetryAttempts: raw.LEAD_PROVIDER_MAX_RETRIES ?? raw.LEAD_PROVIDER_RETRY_ATTEMPTS ?? 2,
+  leadProviderRetryBaseMs: raw.LEAD_PROVIDER_RETRY_BASE_MS,
+  salesEmailHost: raw.SALES_EMAIL_HOST.trim(),
+  salesEmailPort: raw.SALES_EMAIL_PORT ?? raw.SMTP_PORT,
+  salesEmailSecure: raw.SALES_EMAIL_SECURE ?? raw.SMTP_SECURE,
+  salesEmailUser: raw.SALES_EMAIL_USER.trim(),
+  salesEmailPassword: raw.SALES_EMAIL_PASSWORD,
+  salesEmailFrom: raw.SALES_EMAIL_FROM.trim(),
+  salesEmailWebhookSecret: raw.SALES_EMAIL_WEBHOOK_SECRET,
+  whatsappGraphBaseUrl: raw.WHATSAPP_GRAPH_BASE_URL.trim() || 'https://graph.facebook.com/v21.0',
+  whatsappPhoneNumberId: raw.WHATSAPP_PHONE_NUMBER_ID.trim(),
+  whatsappAccessToken: raw.WHATSAPP_ACCESS_TOKEN,
+  whatsappVerifyToken: raw.WHATSAPP_VERIFY_TOKEN,
+  whatsappAppSecret: raw.WHATSAPP_APP_SECRET,
+  salesOutboundQueueName: raw.SALES_OUTBOUND_QUEUE_NAME.trim() || 'sales-outbound',
+  salesOutboundWorkerConcurrency: raw.SALES_OUTBOUND_WORKER_CONCURRENCY,
+  salesAgentQueueName: raw.SALES_AGENT_QUEUE_NAME.trim() || 'sales-agent',
+  salesAgentWorkerConcurrency: raw.SALES_AGENT_WORKER_CONCURRENCY,
+  salesAgentMaxOutboundPerProspect: raw.SALES_AGENT_MAX_OUTBOUND_PER_PROSPECT,
+  salesAgentMinFollowupIntervalHours: raw.SALES_AGENT_MIN_FOLLOWUP_INTERVAL_HOURS,
+  salesAgentContextMessageLimit: raw.SALES_AGENT_CONTEXT_MESSAGE_LIMIT,
+  salesAgentLlmTimeoutMs: Math.min(raw.SALES_AGENT_LLM_TIMEOUT_MS, 120_000),
+  salesAgentFollowupScanIntervalMs: raw.SALES_AGENT_FOLLOWUP_SCAN_INTERVAL_MS,
+  salesMaxOutboundPerOrgPerHour: raw.SALES_MAX_OUTBOUND_PER_ORG_PER_HOUR,
 };

@@ -217,4 +217,24 @@ export type LeadPoolSearchTaskListDto = {
 export type LeadPoolSearchTaskDetailDto = LeadPoolSearchTaskListItemDto & {
   startedAt: string | null;
   errorMessage: string | null;
+  cancelRequestedAt: string | null;
+  cancelledAt: string | null;
+  progress: {
+    phase: string;
+    updatedAt: string;
+    counters: {
+      queriesExecuted: number;
+      uniqueCandidates: number;
+      candidatesResearched: number;
+      emailsFound: number;
+      companiesPersisted: number;
+      companiesScored: number;
+    };
+  } | null;
+  outcome: {
+    requestedTarget: number;
+    acquiredCompanies: number;
+    targetReached: boolean;
+    stopReason: string;
+  } | null;
 };

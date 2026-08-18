@@ -123,3 +123,84 @@ export async function sendMail(input: SendMailInput): Promise<{ provider: string
 
   return { provider: 'smtp' };
 }
+
+function salesSmtpConfigured(): boolean {
+  return Boolean(
+    env.salesEmailHost && env.salesEmailUser && env.salesEmailPassword && env.salesEmailFrom,
+  );
+}
+
+export function isSharedSmtpConfigured(): boolean {
+  return Boolean(
+    env.mailProvider === 'smtp' && env.smtpHost && env.smtpUser && env.smtpPass && env.mailFrom,
+  );
+}
+
+export function isSalesEmailTransportConfigured(): boolean {
+  return salesSmtpConfigured() || isSharedSmtpConfigured();
+}
+
+/**
+ * Sales outbound mail. Reuses nodemailer / existing SMTP; optional SALES_EMAIL_* override.
+ * Does not use MAIL_PROVIDER=ses-api (OTP-only).
+ */
+export async function sendSalesMail(
+  input: SendMailInput,
+): Promise<{ provider: string; messageId?: string }> {
+  if (salesSmtpConfigured()) {
+    const transporter = nodemailer.createTransport({
+      host: env.salesEmailHost,
+      port: env.salesEmailPort,
+      secure: env.salesEmailSecure,
+      auth: {
+        user: env.salesEmailUser,
+        pass: env.salesEmailPassword,
+      },
+    });
+    const info = await transporter.sendMail({
+      from: env.salesEmailFrom,
+      to: input.to,
+      subject: input.subject,
+      text: input.text,
+      html: input.html ?? `<pre style="font-family:sans-serif">${input.text}</pre>`,
+    });
+    return {
+      provider: 'sales-smtp',
+      messageId: typeof info.messageId === 'string' ? info.messageId : undefined,
+    };
+  }
+
+  if (env.mailProvider === 'mock') {
+    logger.info('mail_mock_send', {
+      to: input.to,
+      subject: input.subject,
+      text: input.text,
+    });
+    return { provider: 'mock', messageId: `mock-${Date.now()}` };
+  }
+
+  if (!isSharedSmtpConfigured()) {
+    throw new Error('Sales SMTP is not configured');
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: env.smtpHost,
+    port: env.smtpPort,
+    secure: env.smtpSecure,
+    auth: {
+      user: env.smtpUser,
+      pass: env.smtpPass,
+    },
+  });
+  const info = await transporter.sendMail({
+    from: env.mailFromName ? `"${env.mailFromName}" <${env.mailFrom}>` : env.mailFrom,
+    to: input.to,
+    subject: input.subject,
+    text: input.text,
+    html: input.html ?? `<pre style="font-family:sans-serif">${input.text}</pre>`,
+  });
+  return {
+    provider: 'smtp',
+    messageId: typeof info.messageId === 'string' ? info.messageId : undefined,
+  };
+}
