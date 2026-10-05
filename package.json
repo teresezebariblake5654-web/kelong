@@ -168,7 +168,7 @@
     "@larksuiteoapi/node-sdk": "^1.58.0",
     "@lezer/highlight": "^1.2.3",
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@nodesecure/js-x-ray": "^14.2.0",
+    "@nodesecure/js-x-ray": "^16.1.0",
     "@radix-ui/react-dialog": "^1.1.23",
     "@radix-ui/react-scroll-area": "^1.2.18",
     "@radix-ui/react-separator": "^1.1.15",
